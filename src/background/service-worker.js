@@ -14,10 +14,29 @@ const downloader=new OffscreenDownloadManager();
 let activeRun=null;
 let activeTabId=null;
 
+function bytesToBase64(bytes){
+ const chunkSize=0x8000;
+ let binary='';
+ for(let i=0;i<bytes.length;i+=chunkSize){
+  const chunk=bytes.subarray(i,Math.min(i+chunkSize,bytes.length));
+  binary+=String.fromCharCode(...chunk);
+ }
+ return btoa(binary);
+}
+async function serializeReferenceFile(file){
+ if(!(file instanceof Blob))throw new ExtensionError('REFERENCE_NOT_BLOB','Cached reference is not a Blob/File',{retryable:false,stage:'reference'});
+ const bytes=new Uint8Array(await file.arrayBuffer());
+ return {
+  base64:bytesToBase64(bytes),
+  filename:file.name||'reference.png',
+  mimeType:file.type||'image/png'
+ };
+}
+
 async function locateFlow(){const found=await findSingleFlowTab();if(found.status!=='CONNECTED'){const message=found.status==='WAITING_FOR_FLOW'?'Open Google Flow first.':found.status==='WAITING_FOR_PROJECT'?'Open a Google Flow project before starting the batch.':'Keep only one Google Flow project tab open for V1.';throw new ExtensionError(found.status,message,{retryable:false,stage:'tab'});}activeTabId=found.tab.id;return found.tab;}
 async function sendFlow(type,payload={}){if(!activeTabId)await locateFlow();let response;try{response=await sendFlowMessage(activeTabId,{type,payload});}catch(e){activeTabId=null;await locateFlow();response=await sendFlowMessage(activeTabId,{type,payload});}if(!response?.ok)throw new ExtensionError(response?.error?.code||'FLOW_RPC_ERROR',response?.error?.message||'Flow command failed',{retryable:response?.error?.retryable??true,stage:response?.error?.stage});return response.value;}
 const normalizeCaptured=async value=>{if(value instanceof Blob)return value;if(value?.sourceUrl){const r=await fetch(value.sourceUrl,{credentials:'include'});if(!r.ok)throw new ExtensionError('RESULT_FETCH_FAILED',`Generated asset fetch failed: HTTP ${r.status}`,{retryable:true,stage:'capture'});const blob=await r.blob();if(!blob.type.startsWith('image/'))throw new ExtensionError('RESULT_FETCH_FAILED',`Unexpected MIME ${blob.type}`,{retryable:true,stage:'capture'});return blob;}throw new ExtensionError('RESULT_CAPTURE_EMPTY','Flow returned no generated asset',{retryable:true,stage:'capture'});};
-const flow={prepare:job=>sendFlow(MSG.FLOW_PREPARE,{job}),uploadReference:file=>sendFlow(MSG.FLOW_UPLOAD_REFERENCE,{file}),setPrompt:text=>sendFlow(MSG.FLOW_SET_PROMPT,{text}),generateAndCapture:async job=>{if(!activeTabId)await locateFlow();const target=await sendFlow(MSG.FLOW_GENERATE_ARM,{job});try{return await captureTrustedGeneration(activeTabId,target,()=>sendFlow(MSG.FLOW_GENERATE_WAIT,{job}));}catch(e){if(e instanceof ExtensionError)throw e;throw new ExtensionError('TRUSTED_CAPTURE_FAILED',`Chrome browser-level generate/capture failed: ${e.message}. Close DevTools for the Flow tab and retry.`,{retryable:false,stage:'capture'});}}};
+const flow={prepare:job=>sendFlow(MSG.FLOW_PREPARE,{job}),uploadReference:async file=>sendFlow(MSG.FLOW_UPLOAD_REFERENCE,{reference:await serializeReferenceFile(file)}),setPrompt:text=>sendFlow(MSG.FLOW_SET_PROMPT,{text}),generateAndCapture:async job=>{if(!activeTabId)await locateFlow();const target=await sendFlow(MSG.FLOW_GENERATE_ARM,{job});try{return await captureTrustedGeneration(activeTabId,target,()=>sendFlow(MSG.FLOW_GENERATE_WAIT,{job}));}catch(e){if(e instanceof ExtensionError)throw e;throw new ExtensionError('TRUSTED_CAPTURE_FAILED',`Chrome browser-level generate/capture failed: ${e.message}. Close DevTools for the Flow tab and retry.`,{retryable:false,stage:'capture'});}}};
 const controller=new BatchController({flow,state,cache,downloader});
 async function startBatch(batch){await locateFlow();if(activeRun)return activeRun;activeRun=controller.run(batch).catch(async e=>{const latest=await state.loadActive();if(latest){latest.status=BATCH_STATUS.PAUSED_ERROR;latest.logs=[...(latest.logs||[]),`Runtime: ${e.message}`].slice(-50);await state.save(latest);}}).finally(()=>{activeRun=null;});return activeRun;}
 async function currentState(){const batch=await state.loadActive();const flowState=await findSingleFlowTab();return {batch:batch?summarizeBatch(batch):null,flowStatus:flowState.status};}
