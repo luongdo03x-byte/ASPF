@@ -312,6 +312,47 @@ test('captures generated image bytes even when Flow reports application/octet-st
   assert.ok(blob.size>50000);
 });
 
+test('does not use a preview Network response when the render gate fails', async () => {
+  let eventListener=null;
+  let bodyReads=0;
+  const chromeApi={debugger:{
+    onEvent:{addListener(fn){eventListener=fn;},removeListener(){eventListener=null;}},
+    attach:async()=>{},detach:async()=>{},
+    sendCommand:async(target,method,params)=>{
+      if(method==='Input.dispatchMouseEvent'&&params.type==='mouseReleased'){
+        queueMicrotask(()=>{
+          eventListener?.(target,'Network.responseReceived',{
+            requestId:'preview',
+            response:{url:'https://lh3.googleusercontent.com/generated/preview.png',mimeType:'image/png'}
+          });
+          eventListener?.(target,'Network.loadingFinished',{requestId:'preview',encodedDataLength:120000});
+        });
+      }
+      if(method==='Network.getResponseBody'){
+        bodyReads++;
+        return {body:btoa('P'.repeat(70000)),base64Encoded:true};
+      }
+      return {};
+    }
+  }};
+  const renderError=Object.assign(new Error('Generated image did not become fully rendered and stable before timeout'),{
+    retryable:true,
+    stage:'result'
+  });
+  const {captureTrustedGeneration}=await import('../src/background/runtime-helpers.js');
+  await assert.rejects(
+    ()=>captureTrustedGeneration(
+      77,
+      {x:40,y:50},
+      async()=>{throw renderError;},
+      chromeApi,
+      {timeoutMs:200,minBytes:50000}
+    ),
+    err=>err.message.includes('fully rendered')&&err.retryable===false
+  );
+  assert.equal(bodyReads,0,'preview bytes must not be consumed after the render gate fails');
+});
+
 test('any error after trusted click is marked non-retryable', async () => {
   const chromeApi={debugger:{
     onEvent:{addListener(){},removeListener(){}},
