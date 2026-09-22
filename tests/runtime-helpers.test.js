@@ -142,9 +142,12 @@ test('captures the generated image body from DevTools Network for the exact Flow
 });
 
 
-test('captures a large generated image from Network even when DOM result detection never resolves', async () => {
+test('does not capture Network bytes until the DOM readiness gate resolves', async () => {
   let eventListener=null;
-  const imageUrl='https://lh3.googleusercontent.com/generated/network-only.webp';
+  let bodyReads=0;
+  let releaseDescriptor;
+  const imageUrl='https://lh3.googleusercontent.com/generated/final.webp';
+  const gate=new Promise(resolve=>{releaseDescriptor=resolve;});
   const chromeApi={
     debugger:{
       onEvent:{
@@ -160,6 +163,7 @@ test('captures a large generated image from Network even when DOM result detecti
           });
         }
         if(method==='Network.getResponseBody'){
+          bodyReads++;
           return {body:btoa('X'.repeat(60000)),base64Encoded:true};
         }
         return {};
@@ -168,10 +172,14 @@ test('captures a large generated image from Network even when DOM result detecti
     }
   };
   const {captureTrustedGeneration}=await import('../src/background/runtime-helpers.js');
-  const never=new Promise(()=>{});
-  const blob=await captureTrustedGeneration(77,{x:420,y:690},()=>never,chromeApi,{timeoutMs:500,minBytes:50000});
+  const capture=captureTrustedGeneration(77,{x:420,y:690},()=>gate,chromeApi,{timeoutMs:1000,minBytes:50000});
+  await new Promise(r=>setTimeout(r,40));
+  assert.equal(bodyReads,0,'network body must not be consumed while the visual is still rendering');
+  releaseDescriptor({sourceUrl:imageUrl,rect:{x:200,y:150,width:600,height:340}});
+  const blob=await capture;
   assert.equal(blob.type,'image/webp');
   assert.equal(blob.size,60000);
+  assert.equal(bodyReads,1);
 });
 
 test('network capture ignores tiny UI images and uses the large generated response', async () => {
@@ -199,10 +207,62 @@ test('network capture ignores tiny UI images and uses the large generated respon
     }
   };
   const {captureTrustedGeneration}=await import('../src/background/runtime-helpers.js');
-  const blob=await captureTrustedGeneration(77,{x:420,y:690},()=>new Promise(()=>{}),chromeApi,{timeoutMs:500,minBytes:50000});
+  const finalUrl='https://lh3.googleusercontent.com/generated/image.png';
+  const blob=await captureTrustedGeneration(
+    77,
+    {x:420,y:690},
+    async()=>({sourceUrl:finalUrl,rect:{x:200,y:150,width:600,height:340}}),
+    chromeApi,
+    {timeoutMs:500,minBytes:50000}
+  );
   assert.equal(blob.size,70000);
 });
 
+
+test('uses the settled DOM card screenshot before an unmatched preview Network response', async () => {
+  let eventListener=null;
+  let networkBodyReads=0;
+  let screenshots=0;
+  const chromeApi={
+    debugger:{
+      onEvent:{addListener(fn){eventListener=fn;},removeListener(){eventListener=null;}},
+      attach:async()=>{},
+      sendCommand:async(target,method,params)=>{
+        if(method==='Input.dispatchMouseEvent'&&params.type==='mouseReleased'){
+          queueMicrotask(()=>{
+            eventListener?.(target,'Network.responseReceived',{
+              requestId:'preview',
+              response:{url:'https://lh3.googleusercontent.com/generated/preview.png',mimeType:'image/png'}
+            });
+            eventListener?.(target,'Network.loadingFinished',{requestId:'preview',encodedDataLength:90000});
+          });
+        }
+        if(method==='Network.getResponseBody'){
+          networkBodyReads++;
+          return {body:btoa('P'.repeat(60000)),base64Encoded:true};
+        }
+        if(method==='Page.captureScreenshot'){
+          screenshots++;
+          return {data:btoa('FINAL_SCREENSHOT')};
+        }
+        return {};
+      },
+      detach:async()=>{}
+    }
+  };
+  const {captureTrustedGeneration}=await import('../src/background/runtime-helpers.js');
+  const blob=await captureTrustedGeneration(
+    77,
+    {x:420,y:690},
+    async()=>({sourceUrl:'',rect:{x:200,y:150,width:600,height:340}}),
+    chromeApi,
+    {timeoutMs:500,minBytes:50000}
+  );
+  assert.equal(blob.type,'image/png');
+  assert.equal(await blob.text(),'FINAL_SCREENSHOT');
+  assert.equal(screenshots,1);
+  assert.equal(networkBodyReads,0,'preview network response must not beat the settled DOM card');
+});
 
 test('marks post-submit capture failures as non-retryable to prevent duplicate generations', async () => {
   const chromeApi={
@@ -240,7 +300,14 @@ test('captures generated image bytes even when Flow reports application/octet-st
     }
   }};
   const {captureTrustedGeneration}=await import('../src/background/runtime-helpers.js');
-  const blob=await captureTrustedGeneration(77,{x:40,y:50},()=>new Promise(()=>{}),chromeApi,{timeoutMs:500,minBytes:50000});
+  const finalUrl='https://lh3.googleusercontent.com/generated/opaque';
+  const blob=await captureTrustedGeneration(
+    77,
+    {x:40,y:50},
+    async()=>({sourceUrl:finalUrl,rect:{x:200,y:150,width:600,height:340}}),
+    chromeApi,
+    {timeoutMs:500,minBytes:50000}
+  );
   assert.equal(blob.type,'image/png');
   assert.ok(blob.size>50000);
 });
