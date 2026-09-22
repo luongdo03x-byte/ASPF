@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Flow Batch Generator",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Generate dependency-aware image batches in Google Flow from prompts_batch.md.",
   "minimum_chrome_version": "148",
   "message_serialization": "structured_clone",
