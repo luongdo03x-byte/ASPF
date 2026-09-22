@@ -146,6 +146,15 @@ export async function captureTrustedGeneration(tabId,target,waitForDescriptor,ch
     }
    }
 
+   // If the DOM readiness gate has a settled card rectangle but the final
+   // asset URL cannot be matched exactly, capture that final rendered card
+   // before considering any generic network response. This prevents an early
+   // preview/placeholder response from being mistaken for the completed image.
+   if(descriptorValue?.rect){
+    const shot=await captureRect(descriptorValue.rect);
+    if(shot)return shot;
+   }
+
    const finished=[...responses.values()]
     .filter(r=>r.finished&&!bodyTried.has(r.requestId))
     .sort((a,b)=>b.encodedDataLength-a.encodedDataLength);
@@ -153,11 +162,6 @@ export async function captureTrustedGeneration(tabId,target,waitForDescriptor,ch
     bodyTried.add(rec.requestId);
     const blob=await readResponseBody(rec);
     if(blob&&blob.size>=minBytes)return blob;
-   }
-
-   if(descriptorValue?.rect){
-    const shot=await captureRect(descriptorValue.rect);
-    if(shot)return shot;
    }
 
    if(descriptorError){
