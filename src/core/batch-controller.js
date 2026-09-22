@@ -10,7 +10,7 @@ export class BatchController {
    const ok=await this.runJob(batch,job); if(!ok)return batch;
  }
  batch.status=BATCH_STATUS.COMPLETED;batch.currentJobId=null;await this.persist(batch);await this.cache.deleteBatch(batch.id);return batch;}
- async runJob(batch,job){const max=batch.settings?.maxRetries??2;let submitted=false;for(let attempt=0;attempt<=max;attempt++){try{batch.currentJobId=job.id;job.status=JOB_STATUS.PREPARING_FLOW;await this.persist(batch);await this.flow.prepare({...job,model:batch.settings?.model||'Nano Banana Pro'});
+ async runJob(batch,job){const max=batch.settings?.maxRetries??2;let submitted=false;for(let attempt=0;attempt<=max;attempt++){try{batch.currentJobId=job.id;job.status=JOB_STATUS.PREPARING_FLOW;await this.persist(batch);await this.flow.prepare({...job,outputs:batch.settings?.outputs??1,model:batch.settings?.model||'Nano Banana Pro'});
     if(job.referenceId){job.status=JOB_STATUS.UPLOADING_REFERENCE;await this.persist(batch);const rec=await this.cache.get(batch.id,job.referenceId);if(!rec)throw new ExtensionError('MISSING_DEPENDENCY_BLOB',`Missing ${job.referenceId}`,{retryable:false,stage:'reference'});const file=new File([rec.blob],rec.filename,{type:rec.mimeType});await this.flow.uploadReference(file);}
     job.status=JOB_STATUS.SETTING_PROMPT;await this.persist(batch);await this.flow.setPrompt(job.finalPrompt);
     job.status=JOB_STATUS.GENERATING;await this.persist(batch);const blob=await this.flow.generateAndCapture(job);submitted=true;
