@@ -128,6 +128,13 @@ export async function captureTrustedGeneration(tabId,target,waitForDescriptor,ch
 
   const deadline=Date.now()+timeoutMs;
   while(Date.now()<deadline){
+   // Do not capture network bytes before the content runtime confirms that
+   // Flow's visual result has finished rendering and remained stable.
+   if(!descriptorSettled){
+    await new Promise(r=>setTimeout(r,80));
+    continue;
+   }
+
    if(descriptorValue instanceof Blob)return descriptorValue;
 
    const sourceUrl=descriptorValue?.sourceUrl||'';
@@ -148,12 +155,18 @@ export async function captureTrustedGeneration(tabId,target,waitForDescriptor,ch
     if(blob&&blob.size>=minBytes)return blob;
    }
 
-   if(descriptorSettled&&descriptorValue?.rect){
+   if(descriptorValue?.rect){
     const shot=await captureRect(descriptorValue.rect);
     if(shot)return shot;
    }
 
-   await new Promise(r=>setTimeout(r,50));
+   if(descriptorError){
+    descriptorError.retryable=false;
+    descriptorError.stage=descriptorError.stage||'capture';
+    throw descriptorError;
+   }
+
+   await new Promise(r=>setTimeout(r,80));
   }
 
   if(descriptorValue?.rect){
