@@ -8,10 +8,10 @@ function makeBatch(){return {id:'b1',name:'demo',status:'READY',currentJobId:nul
 
 test('controller executes dependency chain, downloads each, completes then clears cache', async()=>{
  const calls=[]; const state=new MemoryStateStore(); const cache=new MemoryResultCache();
- const flow={prepare:async job=>calls.push(`prepare:${job.outputs}`),uploadReference:async f=>calls.push('ref:'+f.name),setPrompt:async p=>calls.push('prompt:'+p),generateAndCapture:async()=>new Blob(['img'],{type:'image/png'})};
+ const flow={prepare:async()=>calls.push('prepare'),uploadReference:async f=>calls.push('ref:'+f.name),setPrompt:async p=>calls.push('prompt:'+p),generateAndCapture:async()=>new Blob(['img'],{type:'image/png'})};
  const downloader={save:async(_blob,path)=>calls.push('download:'+path)};
  const c=new BatchController({flow,state,cache,downloader}); const b=makeBatch(); await state.save(b); await c.run(b);
- assert.equal(b.status,'COMPLETED'); assert.deepEqual(b.jobs.map(j=>j.status),['DONE','DONE']); assert.ok(calls.every(x=>!x.startsWith('prepare:')||x==='prepare:1')); assert.ok(calls.some(x=>x==='ref:S01_IMG01.png')); assert.equal(await cache.has('b1','S01_IMG01'),false);
+ assert.equal(b.status,'COMPLETED'); assert.deepEqual(b.jobs.map(j=>j.status),['DONE','DONE']); assert.equal(calls.filter(x=>x==='prepare').length,2); assert.ok(calls.some(x=>x==='ref:S01_IMG01.png')); assert.equal(await cache.has('b1','S01_IMG01'),false);
 });
 
 test('controller pauses after initial attempt plus two retry failures', async()=>{
