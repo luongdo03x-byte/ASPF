@@ -29,6 +29,7 @@ function matchesSelector(el, selector) {
   if (selector === '[role="textbox"]') return el.getAttribute('role') === 'textbox';
   if (selector === '[role="img"]') return el.getAttribute('role') === 'img';
   if (selector === 'input[type="text"]') return el.tagName === 'INPUT' && el.getAttribute('type') === 'text';
+  if (selector === 'input[type="file"]') return el.tagName === 'INPUT' && el.getAttribute('type') === 'file';
   if (selector === 'button') return el.tagName === 'BUTTON';
   if (selector === 'img') return el.tagName === 'IMG';
   if (selector === 'div,span,p,label') return ['DIV','SPAN','P','LABEL'].includes(el.tagName);
@@ -54,7 +55,12 @@ function loadRuntime({document, location={hostname:'flow.google.com', pathname:'
     setTimeout,
     clearTimeout,
     fetch: async()=>{ throw new Error('unused'); },
-    DataTransfer: class {},
+    DataTransfer: class {
+      constructor(){
+        this.files=[];
+        this.items={add:file=>this.files.push(file)};
+      }
+    },
     Event: class { constructor(type, init={}){ this.type=type; Object.assign(this, init); } },
     InputEvent: class { constructor(type, init={}){ this.type=type; Object.assign(this, init); } },
     KeyboardEvent: class { constructor(type, init={}){ this.type=type; Object.assign(this, init); } },
@@ -268,4 +274,35 @@ test('finds Settings by geometry even when DOM ancestors hide the right-side con
   const runtime=loadRuntime({document:makeDocument([editor,add,agent,extra,sliders,arrow])});
   assert.equal(runtime.generateButton(),arrow);
   assert.equal(runtime.settingsButton(),sliders);
+});
+
+
+test('uploadReference opens Add and waits for Flow to create the file input', async()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
+  const arrow=element({tagName:'BUTTON'});
+  const fileInput=element({tagName:'INPUT',attrs:{type:'file',accept:'image/*'}});
+  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,arrow]:[];}};
+  editor.parentElement=composer;
+
+  let showInput=false;
+  add.click=()=>{add.clicked=true;showInput=true;};
+
+  const doc={
+    body:{innerText:''},
+    querySelector(){return null;},
+    querySelectorAll(selector){
+      const all=showInput?[editor,add,agent,arrow,fileInput]:[editor,add,agent,arrow];
+      if(selector.includes(','))return selector.split(',').flatMap(part=>all.filter(x=>matchesSelector(x,part.trim())));
+      return all.filter(x=>matchesSelector(x,selector));
+    }
+  };
+  fileInput.dispatchEvent=evt=>{if(evt.type==='change')doc.body.innerText='S01_IMG01.png';};
+
+  const runtime=loadRuntime({document:doc});
+  await runtime.uploadReference({name:'S01_IMG01.png'});
+  assert.equal(add.clicked,true);
+  assert.equal(fileInput.files.length,1);
+  assert.equal(fileInput.files[0].name,'S01_IMG01.png');
 });
