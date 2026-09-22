@@ -184,48 +184,28 @@ test('detects a newly rendered role=img visual card when Flow does not use an im
 });
 
 
-test('prepare forces Flow image output count to one from composer settings', async()=>{
+test('prepare skips Flow settings and only validates that the composer exists', async()=>{
   const editor=element({attrs:{placeholder:'What do you want to create?'}});
   const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
   const agent=element({tagName:'BUTTON',text:'Agent'});
   const settings=element({tagName:'BUTTON',attrs:{'aria-label':'Settings'}});
   const arrow=element({tagName:'BUTTON'});
-  const one=element({tagName:'BUTTON',text:'1'});
-  const two=element({tagName:'BUTTON',text:'2',attrs:{'aria-pressed':'true'}});
-  const outputRow={
-    parentElement:null,
-    querySelectorAll(selector){
-      if(selector.includes('button')) return [one,two];
-      return [];
-    }
-  };
-  const outputLabel=element({tagName:'DIV',text:'Number of outputs'});
-  outputLabel.parentElement=outputRow;
   const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,settings,arrow]:[];}};
   editor.parentElement=composer;
-  let settingsOpened=false;
-  settings.click=()=>{settingsOpened=true;settings.clicked=true;};
-  one.click=()=>{one.clicked=true;one.getAttribute=(name)=>name==='aria-pressed'?'true':null;};
-  const base=makeDocument([editor,add,agent,settings,arrow,outputLabel,one,two]);
-  const document={...base,querySelectorAll(selector){
-    if(selector==='div,span,p,label,legend') return settingsOpened?[outputLabel]:[];
-    return base.querySelectorAll(selector);
-  }};
-  const runtime=loadRuntime({document});
-  await runtime.prepare({outputs:1});
-  assert.equal(settings.clicked,true);
-  assert.equal(one.clicked,true);
+  const runtime=loadRuntime({document:makeDocument([editor,add,agent,settings,arrow])});
+  await assert.doesNotReject(()=>runtime.prepare({outputs:1}));
+  assert.notEqual(settings.clicked,true);
 });
 
-test('prepare refuses to generate when output count cannot be safely forced to one', async()=>{
+test('prepare does not require Agent settings to exist in manual-settings mode', async()=>{
   const editor=element({attrs:{placeholder:'What do you want to create?'}});
   const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
-  const settings=element({tagName:'BUTTON',attrs:{'aria-label':'Settings'}});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
   const arrow=element({tagName:'BUTTON'});
-  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,settings,arrow]:[];}};
+  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,arrow]:[];}};
   editor.parentElement=composer;
-  const runtime=loadRuntime({document:makeDocument([editor,add,settings,arrow])});
-  await assert.rejects(()=>runtime.prepare({outputs:1}),/output|settings/i);
+  const runtime=loadRuntime({document:makeDocument([editor,add,agent,arrow])});
+  await assert.doesNotReject(()=>runtime.prepare({outputs:1}));
 });
 
 
