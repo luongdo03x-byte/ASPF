@@ -534,19 +534,40 @@
       for(const [ctor,type] of [['PointerEvent','pointerover'],['MouseEvent','mouseover'],['PointerEvent','pointerdown'],['MouseEvent','mousedown'],['PointerEvent','pointerup'],['MouseEvent','mouseup'],['MouseEvent','click']])send(ctor,type);
       target.click?.();
     }
-    async waitForSubmissionSignal(button, editor, startedAt=Date.now(), timeoutMs=5000){
+    editorText(editor){
+      if(!editor)return '';
+      return 'value' in editor ? String(editor.value||'') : String(editor.textContent||'');
+    }
+    async waitForSubmissionSignal(button, editor, startedAt=Date.now(), timeoutMs=8000){
       const initial=this.before;
+      const originalText=this.editorText(editor).trim();
       while(Date.now()-startedAt<timeoutMs){
         const after=this.snapshot();
         if([...after].some(src=>!initial.has(src)))return true;
+
+        const currentEditor=this.promptEditor();
+        const currentButton=this.generateButton();
+
+        if(currentButton?.disabled)return true;
         if(button && button.disabled)return true;
+
         const bodyText=(document.body?.innerText||'').toLowerCase();
-        if(/generating|creating|rendering|processing/.test(bodyText))return true;
-        const busy=document.querySelector?.('[aria-busy="true"],[role="progressbar"],progress');
+        if(/generating|creating|rendering|processing|preparing/.test(bodyText))return true;
+
+        const busy=document.querySelector?.('[aria-busy="true"],[role="progressbar"],progress,[data-loading="true"]');
         if(busy)return true;
-        if(!editor)return true;
-        const text='value' in editor ? String(editor.value||'') : String(editor.textContent||'');
-        if(!text.trim())return true;
+
+        if(currentEditor){
+          const currentText=this.editorText(currentEditor).trim();
+          if(!currentText)return true;
+          if(editor&&currentEditor!==editor&&originalText&&currentText!==originalText)return true;
+        }else if(editor){
+          const stillConnected=typeof document.contains==='function'?document.contains(editor):true;
+          if(!stillConnected)return true;
+        }else{
+          return true;
+        }
+
         await wait(200);
       }
       return false;
@@ -568,7 +589,7 @@
     async waitForTrustedGenerateAndCapture(){
       const editor=this.promptEditor();
       const button=this.generateButton();
-      const accepted=await this.waitForSubmissionSignal(button,editor,Date.now(),5000);
+      const accepted=await this.waitForSubmissionSignal(button,editor,Date.now(),8000);
       if(!accepted)throw error('SUBMIT_NOT_CONFIRMED','Flow did not react after the browser-level click',true,'generate');
       const visual=await this.waitForSettledVisual();
       const src=visual.sourceUrl||'';
