@@ -179,6 +179,7 @@ test('detects a newly rendered role=img visual card when Flow does not use an im
   editor.parentElement=composer;
   const card=element({tagName:'DIV',attrs:{role:'img','aria-label':'Generated image'}});
   card.getBoundingClientRect=()=>({left:210,top:155,width:350,height:200,right:560,bottom:355});
+  card._computedStyle={filter:'none',opacity:'1',backgroundImage:'url("https://example.test/generated.png")'};
   let includeCard=false;
   const doc={
     body:{innerText:''},
@@ -341,7 +342,7 @@ test('waitForSettledVisual waits until a blurred result becomes stable', async()
 
   const card=element({tagName:'DIV',attrs:{role:'img','aria-label':'Generated image'}});
   card.getBoundingClientRect=()=>({left:210,top:155,width:420,height:240,right:630,bottom:395});
-  card._computedStyle={filter:'blur(8px)',opacity:'1',backgroundImage:''};
+  card._computedStyle={filter:'blur(8px)',opacity:'1',backgroundImage:'url("https://example.test/generated.png")'};
 
   let includeCard=false;
   const doc={
@@ -363,7 +364,7 @@ test('waitForSettledVisual waits until a blurred result becomes stable', async()
   includeCard=true;
 
   const started=Date.now();
-  setTimeout(()=>{card._computedStyle={filter:'none',opacity:'1',backgroundImage:''};},25);
+  setTimeout(()=>{card._computedStyle={filter:'none',opacity:'1',backgroundImage:'url("https://example.test/generated.png")'};},25);
   const result=await runtime.waitForSettledVisual(250);
   const elapsed=Date.now()-started;
 
@@ -415,4 +416,36 @@ test('waitForSettledVisual resets stability when the generated image source chan
 
   assert.equal(result.sourceUrl,'https://example.test/final.png');
   assert.ok(elapsed>=50, `expected stability timer reset after source change, got ${elapsed}ms`);
+});
+
+
+test('keeps an empty role=img placeholder busy until it has renderable pixels', ()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  const card=element({tagName:'DIV',attrs:{role:'img','aria-label':'Generated image'}});
+  card.getBoundingClientRect=()=>({left:210,top:155,width:420,height:240,right:630,bottom:395});
+  card._computedStyle={filter:'none',opacity:'1',backgroundImage:'none'};
+  const runtime=loadRuntime({document:makeDocument([editor,card])});
+  const candidate=runtime.visualCandidates().find(v=>v.el===card);
+  assert.ok(candidate);
+  assert.equal(runtime.visualIsBusy(candidate),true);
+  card._computedStyle={filter:'none',opacity:'1',backgroundImage:'url("https://example.test/final.png")'};
+  const rendered=runtime.visualCandidates().find(v=>v.el===card);
+  assert.equal(runtime.visualIsBusy(rendered),false);
+});
+
+test('treats 100 percent as complete but keeps sub-100 progress busy', ()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  const card=element({tagName:'DIV',attrs:{role:'img','aria-label':'Generated image'}});
+  card.getBoundingClientRect=()=>({left:210,top:155,width:420,height:240,right:630,bottom:395});
+  card._computedStyle={filter:'none',opacity:'1',backgroundImage:'url("https://example.test/final.png")'};
+  const parent=element({tagName:'DIV',text:'100%'});
+  parent.querySelector=()=>null;
+  card.parentElement=parent;
+  const runtime=loadRuntime({document:makeDocument([editor,card,parent])});
+  let candidate=runtime.visualCandidates().find(v=>v.el===card);
+  assert.equal(runtime.visualIsBusy(candidate),false);
+  parent.innerText='84%';
+  parent.textContent='84%';
+  candidate=runtime.visualCandidates().find(v=>v.el===card);
+  assert.equal(runtime.visualIsBusy(candidate),true);
 });
