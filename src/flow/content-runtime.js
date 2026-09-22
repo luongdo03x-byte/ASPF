@@ -5,7 +5,7 @@
   const find=(elements,patterns)=>[...elements].find(el=>patterns.some(p=>norm(semantic(el)).includes(norm(p)))&&!el.disabled);
   const error=(code,message,retryable=true,stage=null)=>Object.assign(new Error(message),{code,retryable,stage});
   class FlowRuntime {
-    constructor(){this.before=new Set();this.beforeVisual=new Set();this.timeoutMs=180000;this.confirmedOutputCount=null;}
+    constructor(){this.before=new Set();this.beforeVisual=new Set();this.timeoutMs=180000;this.resultStableMs=4000;this.resultSettleMs=2000;this.resultPollMs=350;this.confirmedOutputCount=null;}
     isProjectPage(){return /(^|\.)flow\.google\.com$/i.test(location.hostname||'')&&/^\/project\//.test(location.pathname||'');}
     editorCandidates(root=document){
       const selectors=['textarea','[contenteditable]','[role="textbox"]','input[type="text"]'];
@@ -353,17 +353,124 @@
       }).filter(Boolean);
     }
     visualSnapshot(){return new Set(this.visualCandidates().map(v=>v.signature));}
-    async waitForNewVisual(timeoutMs=this.timeoutMs){
-      const start=Date.now();
-      while(Date.now()-start<timeoutMs){
-        const fresh=this.visualCandidates().filter(v=>!this.beforeVisual.has(v.signature));
-        if(fresh.length){
-          fresh.sort((a,b)=>a.rect.x-b.rect.x||b.area-a.area);
-          return fresh[0];
-        }
-        await wait(300);
+    isFreshVisual(v){
+      if(v.sourceUrl&&this.before.has(v.sourceUrl))return false;
+      return !this.beforeVisual.has(v.signature);
+    }
+    visualFingerprint(v){
+      const el=v?.el;
+      const style=globalThis.getComputedStyle?.(el)||{};
+      const naturalWidth=Number(el?.naturalWidth||el?.width||0);
+      const naturalHeight=Number(el?.naturalHeight||el?.height||0);
+      const text=norm(semantic(el));
+      return [
+        v?.sourceUrl||'',
+        Math.round(v?.rect?.x||0),
+        Math.round(v?.rect?.y||0),
+        Math.round(v?.rect?.width||0),
+        Math.round(v?.rect?.height||0),
+        naturalWidth,
+        naturalHeight,
+        String(style.filter||''),
+        String(style.opacity||''),
+        text.replace(/\s+/g,' ').slice(0,160)
+      ].join('|');
+    }
+    visualIsBusy(v){
+      const el=v?.el;
+      if(!el)return true;
+      const tag=String(el.tagName||'').toUpperCase();
+      if(tag==='IMG'){
+        if(el.complete===false)return true;
+        const nw=Number(el.naturalWidth||0),nh=Number(el.naturalHeight||0);
+        if((Number.isFinite(nw)&&nw>0&&nw<256)||(Number.isFinite(nh)&&nh>0&&nh<140))return true;
+        if((el.src||el.currentSrc)&&(!nw||!nh))return true;
       }
-      throw error('RESULT_TIMEOUT','Timed out waiting for generated visual card',true,'result');
+      const style=globalThis.getComputedStyle?.(el)||{};
+      const filter=String(style.filter||'').toLowerCase();
+      const opacity=Number.parseFloat(style.opacity);
+      if(/blur\((?!0(?:px)?\))/i.test(filter))return true;
+      if(Number.isFinite(opacity)&&opacity<0.95)return true;
+      let node=el;
+      for(let depth=0;node&&depth<4;depth++,node=node.parentElement){
+        if(node.getAttribute?.('aria-busy')==='true')return true;
+        const state=norm(node.getAttribute?.('data-state')||node.getAttribute?.('data-loading')||'');
+        if(/loading|generating|processing|rendering|pending/.test(state))return true;
+        const ownText=norm(node.innerText||node.textContent||'');
+        if(/generating|creating|rendering|processing|loading|preparing/.test(ownText))return true;
+        if(/(^|\s)\d{1,3}%($|\s)/.test(ownText))return true;
+        const busy=node.querySelector?.('[aria-busy="true"],[role="progressbar"],progress,[data-loading="true"]');
+        if(busy)return true;
+      }
+      return false;
+    }
+    sameVisualSlot(a,b){
+      if(!a?.rect||!b?.rect)return false;
+      const ax=a.rect.x+a.rect.width/2,ay=a.rect.y+a.rect.height/2;
+      const bx=b.rect.x+b.rect.width/2,by=b.rect.y+b.rect.height/2;
+      return Math.abs(ax-bx)<=Math.max(80,a.rect.width*.35)&&Math.abs(ay-by)<=Math.max(80,a.rect.height*.35);
+    }
+    pickFreshVisual(previous=null){
+      const fresh=this.visualCandidates().filter(v=>this.isFreshVisual(v));
+      if(!fresh.length)return null;
+      if(previous){
+        const same=fresh.filter(v=>this.sameVisualSlot(previous,v));
+        if(same.length){
+          same.sort((a,b)=>b.area-a.area);
+          return same[0];
+        }
+      }
+      fresh.sort((a,b)=>a.rect.x-b.rect.x||a.rect.y-b.rect.y||b.area-a.area);
+      return fresh[0];
+    }
+    async waitForSettledVisual(timeoutMs=this.timeoutMs){
+      const start=Date.now();
+      let tracked=null;
+      let lastFingerprint='';
+      let stableSince=0;
+      while(Date.now()-start<timeoutMs){
+        const candidate=this.pickFreshVisual(tracked);
+        if(!candidate){
+          tracked=null;lastFingerprint='';stableSince=0;
+          await wait(this.resultPollMs);
+          continue;
+        }
+        tracked=candidate;
+        if(this.visualIsBusy(candidate)){
+          lastFingerprint='';stableSince=0;
+          await wait(this.resultPollMs);
+          continue;
+        }
+        const fingerprint=this.visualFingerprint(candidate);
+        if(fingerprint!==lastFingerprint){
+          lastFingerprint=fingerprint;
+          stableSince=Date.now();
+          await wait(this.resultPollMs);
+          continue;
+        }
+        if(Date.now()-stableSince>=this.resultStableMs){
+          await wait(this.resultSettleMs);
+          const finalCandidate=this.pickFreshVisual(candidate);
+          if(!finalCandidate||this.visualIsBusy(finalCandidate)){
+            lastFingerprint='';stableSince=0;
+            await wait(this.resultPollMs);
+            continue;
+          }
+          if(this.visualFingerprint(finalCandidate)!==fingerprint){
+            tracked=finalCandidate;
+            lastFingerprint=this.visualFingerprint(finalCandidate);
+            stableSince=Date.now();
+            await wait(this.resultPollMs);
+            continue;
+          }
+          return finalCandidate;
+        }
+        await wait(this.resultPollMs);
+      }
+      throw error('RESULT_NOT_SETTLED','Generated image did not become fully rendered and stable before timeout',false,'result');
+    }
+    async waitForNewVisual(timeoutMs=this.timeoutMs){
+      return this.waitForSettledVisual(timeoutMs);
     }
     dispatchPress(target){
       const rect=target.getBoundingClientRect?.()||{left:0,top:0,width:1,height:1};
@@ -408,7 +515,7 @@
       const button=this.generateButton();
       const accepted=await this.waitForSubmissionSignal(button,editor,Date.now(),5000);
       if(!accepted)throw error('SUBMIT_NOT_CONFIRMED','Flow did not react after the browser-level click',true,'generate');
-      const visual=await this.waitForNewVisual();
+      const visual=await this.waitForSettledVisual();
       const src=visual.sourceUrl||'';
       if(/^blob:|^data:/i.test(src)){
         try{const response=await fetch(src);const blob=await response.blob();if(!blob.type.startsWith('image/'))throw new Error(`Unexpected MIME ${blob.type}`);return blob;}
@@ -416,9 +523,9 @@
       }
       return {sourceUrl:src,rect:visual.rect};
     }
-    async clickGenerate(){await this.ensureReady();const editor=this.promptEditor();let b=this.generateButton();const start=Date.now();while(b?.disabled&&Date.now()-start<3000){await wait(100);b=this.generateButton();}if(!b)throw error('GENERATE_BUTTON_NOT_FOUND','Flow send button not found inside the project composer',true,'generate');if(b.disabled)throw error('GENERATE_BUTTON_DISABLED','Flow send button is still disabled after the prompt was filled',true,'generate');this.before=this.snapshot();this.dispatchPress(b);if(await this.waitForSubmissionSignal(b,editor,Date.now(),3000))return;try{editor?.focus?.();editor?.dispatchEvent?.(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Enter',code:'Enter',ctrlKey:true}));editor?.dispatchEvent?.(new KeyboardEvent('keyup',{bubbles:true,cancelable:true,key:'Enter',code:'Enter',ctrlKey:true}));if(await this.waitForSubmissionSignal(b,editor,Date.now(),2000))return;}catch{}throw error('SUBMIT_NOT_CONFIRMED','Flow did not react after the prompt was sent',true,'generate');}
+    async clickGenerate(){await this.ensureReady();const editor=this.promptEditor();let b=this.generateButton();const start=Date.now();while(b?.disabled&&Date.now()-start<3000){await wait(100);b=this.generateButton();}if(!b)throw error('GENERATE_BUTTON_NOT_FOUND','Flow send button not found inside the project composer',true,'generate');if(b.disabled)throw error('GENERATE_BUTTON_DISABLED','Flow send button is still disabled after the prompt was filled',true,'generate');this.before=this.snapshot();this.beforeVisual=this.visualSnapshot();this.dispatchPress(b);if(await this.waitForSubmissionSignal(b,editor,Date.now(),3000))return;try{editor?.focus?.();editor?.dispatchEvent?.(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Enter',code:'Enter',ctrlKey:true}));editor?.dispatchEvent?.(new KeyboardEvent('keyup',{bubbles:true,cancelable:true,key:'Enter',code:'Enter',ctrlKey:true}));if(await this.waitForSubmissionSignal(b,editor,Date.now(),2000))return;}catch{}throw error('SUBMIT_NOT_CONFIRMED','Flow did not react after the prompt was sent',true,'generate');}
     async waitForNewImage(){const start=Date.now();while(Date.now()-start<this.timeoutMs){const candidates=[...document.querySelectorAll('img')].filter(i=>{const s=i.currentSrc||i.src;const w=i.naturalWidth||i.width||0;return s&&!this.before.has(s)&&!/^data:image\/svg/i.test(s)&&w>=256;});if(candidates.length)return candidates.sort((a,b)=>(b.naturalWidth*b.naturalHeight)-(a.naturalWidth*a.naturalHeight))[0];await wait(500);}throw error('RESULT_TIMEOUT','Timed out waiting for generated image',true,'result');}
-    async generateAndCapture(){await this.clickGenerate();const img=await this.waitForNewImage();const src=img.currentSrc||img.src;if(/^blob:|^data:/i.test(src)){try{const response=await fetch(src);const blob=await response.blob();if(!blob.type.startsWith('image/'))throw new Error(`Unexpected MIME ${blob.type}`);return blob;}catch(e){throw error('RESULT_FETCH_FAILED',`Could not capture generated image: ${e.message}`,true,'capture');}}return {sourceUrl:src};}
+    async generateAndCapture(){await this.clickGenerate();const visual=await this.waitForSettledVisual();const src=visual.sourceUrl||'';if(/^blob:|^data:/i.test(src)){try{const response=await fetch(src);const blob=await response.blob();if(!blob.type.startsWith('image/'))throw new Error(`Unexpected MIME ${blob.type}`);return blob;}catch(e){throw error('RESULT_FETCH_FAILED',`Could not capture generated image: ${e.message}`,false,'capture');}}return {sourceUrl:src,rect:visual.rect};}
   }
   globalThis.FlowBatchRuntime={FlowRuntime};
 })();
