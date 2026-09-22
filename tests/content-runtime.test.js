@@ -227,3 +227,18 @@ test('prepare refuses to generate when output count cannot be safely forced to o
   const runtime=loadRuntime({document:makeDocument([editor,add,settings,arrow])});
   await assert.rejects(()=>runtime.prepare({outputs:1}),/output|settings/i);
 });
+
+
+test('uses the unlabeled penultimate composer icon as Settings only inside a compact composer', ()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
+  const extra=element({tagName:'BUTTON'});
+  const sliders=element({tagName:'BUTTON'});
+  const arrow=element({tagName:'BUTTON'});
+  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,extra,sliders,arrow]:[];}};
+  editor.parentElement=composer;
+  const runtime=loadRuntime({document:makeDocument([editor,add,agent,extra,sliders,arrow])});
+  assert.equal(runtime.generateButton(),arrow);
+  assert.equal(runtime.settingsButton(),sliders);
+});
