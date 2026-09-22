@@ -203,7 +203,101 @@
     async ensureReady(){if(!this.isProjectPage())throw error('FLOW_PROJECT_REQUIRED','Open a Google Flow project before starting the batch',false,'prepare');if(!this.promptEditor()){const d=this.diagnostics();throw error('PROMPT_EDITOR_NOT_FOUND',`Flow project composer not found (editors=${d.editors}, hints=${d.hints}, buttons=${d.buttons})`,true,'prepare');}}
     async clickOption(patterns){const el=find(document.querySelectorAll('button'),patterns);if(el){el.click();await wait(100);return true;}return false;}
     async prepare(_job={}){await this.ensureReady();}
-    async uploadReference(file){const input=document.querySelector('input[type="file"]');if(!input)throw error('FILE_INPUT_NOT_FOUND','Reference upload input not found',true,'reference');const beforeImgs=document.querySelectorAll('img').length;const dt=new DataTransfer();dt.items.add(file);input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));const start=Date.now();while(Date.now()-start<10000){if((document.body?.innerText||'').includes(file.name)||document.querySelectorAll('img').length>beforeImgs)return;await wait(250);}throw error('REFERENCE_NOT_CONFIRMED',`Flow did not confirm reference ${file.name}`,true,'reference');}
+    referenceInput(){
+      const inputs=[...(document.querySelectorAll?.('input[type="file"]')||[])].filter(x=>!x.disabled);
+      return inputs.find(x=>/image/i.test(String(x.getAttribute?.('accept')||'')))||inputs[0];
+    }
+    addMediaButton(){
+      const buttons=this.composerButtons();
+      const labeled=buttons.find(b=>/add|attach|upload|plus|thêm|đính kèm/i.test(norm(semantic(b))));
+      if(labeled)return labeled;
+      const geometric=this.nearEditorButtons();
+      return geometric[0];
+    }
+    uploadMenuButton(){
+      const nodes=[...(document.querySelectorAll?.('button,[role="menuitem"],[role="option"],[role="button"]')||[])];
+      const patterns=['upload image','upload','add image','image','media','file','computer','device','ảnh','tệp','tải lên'];
+      return nodes.find(el=>{
+        if(el.disabled)return false;
+        const t=norm(semantic(el));
+        return patterns.some(p=>t.includes(norm(p)))&&!/agent|settings|option|send|generate/.test(t);
+      });
+    }
+    async waitForReferenceInput(timeoutMs=2200){
+      const start=Date.now();
+      while(Date.now()-start<timeoutMs){
+        const input=this.referenceInput();
+        if(input)return input;
+        await wait(100);
+      }
+      return null;
+    }
+    makeTransfer(file){
+      const dt=new DataTransfer();
+      dt.items.add(file);
+      return dt;
+    }
+    async confirmReference(file,beforeImgs,timeoutMs=10000){
+      const start=Date.now();
+      while(Date.now()-start<timeoutMs){
+        if((document.body?.innerText||'').includes(file.name))return true;
+        if((document.querySelectorAll?.('img')||[]).length>beforeImgs)return true;
+        const editor=this.promptEditor();
+        if(editor){
+          let node=editor.parentElement||null;
+          for(let depth=0;node&&depth<4;depth++,node=node.parentElement){
+            const imgs=node.querySelectorAll?.('img,[role="img"]')||[];
+            if(imgs.length)return true;
+          }
+        }
+        await wait(200);
+      }
+      return false;
+    }
+    async dropReference(file,beforeImgs){
+      const editor=this.promptEditor();
+      if(!editor)return false;
+      const dt=this.makeTransfer(file);
+      let target=editor;
+      for(let depth=0;target&&depth<3;depth++,target=target.parentElement){
+        try{
+          const opts={bubbles:true,cancelable:true,composed:true,dataTransfer:dt};
+          for(const type of ['dragenter','dragover','drop']){
+            const Ctor=globalThis.DragEvent||Event;
+            target.dispatchEvent?.(new Ctor(type,opts));
+          }
+          if(await this.confirmReference(file,beforeImgs,1800))return true;
+        }catch{}
+      }
+      return false;
+    }
+    async uploadReference(file){
+      const beforeImgs=(document.querySelectorAll?.('img')||[]).length;
+      let input=this.referenceInput();
+      if(!input){
+        const add=this.addMediaButton();
+        if(add){
+          this.dispatchPress(add);
+          input=await this.waitForReferenceInput(1200);
+        }
+      }
+      if(!input){
+        const menu=this.uploadMenuButton();
+        if(menu){
+          this.dispatchPress(menu);
+          input=await this.waitForReferenceInput(1600);
+        }
+      }
+      if(input){
+        const dt=this.makeTransfer(file);
+        try{input.files=dt.files;}catch(e){throw error('REFERENCE_FILE_ASSIGN_FAILED','Could not attach reference file: '+e.message,true,'reference');}
+        input.dispatchEvent?.(new Event('input',{bubbles:true}));
+        input.dispatchEvent?.(new Event('change',{bubbles:true}));
+        if(await this.confirmReference(file,beforeImgs))return;
+      }
+      if(await this.dropReference(file,beforeImgs))return;
+      throw error('REFERENCE_UPLOAD_UNAVAILABLE','Flow reference uploader did not appear after opening the Add menu',true,'reference');
+    }
     async setPrompt(text){const input=this.promptEditor();if(!input)throw error('PROMPT_EDITOR_NOT_FOUND','Prompt editor not found',true,'prompt');input.focus();if('value' in input){const proto=Object.getPrototypeOf(input);const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set||Object.getOwnPropertyDescriptor(globalThis.HTMLTextAreaElement?.prototype||{},'value')?.set||Object.getOwnPropertyDescriptor(globalThis.HTMLInputElement?.prototype||{},'value')?.set;if(setter)setter.call(input,text);else input.value=text;}else{input.textContent=text;}input.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));input.dispatchEvent(new Event('change',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:' ',code:'Space'}));}
     snapshot(){return new Set([...document.querySelectorAll('img')].map(i=>i.currentSrc||i.src).filter(Boolean));}
     visualCandidates(){
