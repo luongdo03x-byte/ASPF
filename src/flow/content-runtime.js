@@ -5,7 +5,7 @@
   const find=(elements,patterns)=>[...elements].find(el=>patterns.some(p=>norm(semantic(el)).includes(norm(p)))&&!el.disabled);
   const error=(code,message,retryable=true,stage=null)=>Object.assign(new Error(message),{code,retryable,stage});
   class FlowRuntime {
-    constructor(){this.before=new Set();this.beforeVisual=new Set();this.timeoutMs=180000;}
+    constructor(){this.before=new Set();this.beforeVisual=new Set();this.timeoutMs=180000;this.confirmedOutputCount=null;}
     isProjectPage(){return /(^|\.)flow\.google\.com$/i.test(location.hostname||'')&&/^\/project\//.test(location.pathname||'');}
     editorCandidates(root=document){
       const selectors=['textarea','[contenteditable]','[role="textbox"]','input[type="text"]'];
@@ -81,9 +81,164 @@
       const candidates=buttons.filter(b=>!negative.test(semantic(b)));
       return candidates[candidates.length-1];
     }
+    settingsButton(){
+      const buttons=this.composerButtons();
+      return buttons.find(b=>/settings?|options?|preferences?|generation settings|tune|adjust|cài đặt|tùy chọn/i.test(semantic(b)));
+    }
+    outputLabels(){
+      const pattern=/number of outputs|outputs? per|outputs?|số lượng đầu ra|số ảnh|số kết quả/i;
+      return [...(document.querySelectorAll?.('div,span,p,label,legend')||[])].filter(el=>pattern.test(semantic(el)));
+    }
+    outputControlRoot(){
+      for(const label of this.outputLabels()){
+        let node=label.parentElement||null;
+        for(let depth=0;node&&depth<5;depth++,node=node.parentElement){
+          const controls=[...(node.querySelectorAll?.('button,[role="radio"],[role="option"],[role="combobox"],input[type="radio"],select')||[])];
+          if(controls.length)return {label,node,controls};
+        }
+      }
+      return null;
+    }
+    controlValue(el){
+      const direct=el?.value;
+      if(direct!=null&&String(direct).trim()!=='')return String(direct).trim();
+      const attr=el?.getAttribute?.('value');
+      if(attr!=null&&String(attr).trim()!=='')return String(attr).trim();
+      const visible=String(el?.innerText||el?.textContent||'').trim();
+      if(visible)return visible;
+      return String(semantic(el)||'').trim();
+    }
+    isSelected(el){
+      return el?.checked===true||el?.selected===true||el?.getAttribute?.('aria-checked')==='true'||el?.getAttribute?.('aria-pressed')==='true'||el?.getAttribute?.('data-state')==='checked'||el?.getAttribute?.('data-selected')==='true';
+    }
+    async waitForOutputControl(timeoutMs=2500){
+      const start=Date.now();
+      while(Date.now()-start<timeoutMs){const root=this.outputControlRoot();if(root)return root;await wait(100);}return null;
+    }
+    exactOutputChoice(controls,count){
+      const exact=String(count);
+      return controls.find(el=>{
+        const value=this.controlValue(el);
+        if(value===exact)return true;
+        const text=norm(semantic(el));
+        return new RegExp(`^${exact}\\s*(output|outputs|image|images|ảnh)?(() => {
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  const norm=s=>String(s||'').trim().toLowerCase();
+  const semantic=el=>[el.getAttribute?.('aria-label'),el.getAttribute?.('aria-placeholder'),el.getAttribute?.('placeholder'),el.getAttribute?.('data-placeholder'),el.getAttribute?.('title'),el.getAttribute?.('data-tooltip'),el.getAttribute?.('data-tooltip-text'),el.getAttribute?.('data-testid'),el.innerText,el.textContent].filter(Boolean).join(' ');
+  const find=(elements,patterns)=>[...elements].find(el=>patterns.some(p=>norm(semantic(el)).includes(norm(p)))&&!el.disabled);
+  const error=(code,message,retryable=true,stage=null)=>Object.assign(new Error(message),{code,retryable,stage});
+  class FlowRuntime {
+    constructor(){this.before=new Set();this.beforeVisual=new Set();this.timeoutMs=180000;this.confirmedOutputCount=null;}
+    isProjectPage(){return /(^|\.)flow\.google\.com$/i.test(location.hostname||'')&&/^\/project\//.test(location.pathname||'');}
+    editorCandidates(root=document){
+      const selectors=['textarea','[contenteditable]','[role="textbox"]','input[type="text"]'];
+      const seen=new Set();
+      const out=[];
+      for(const selector of selectors){
+        for(const el of root.querySelectorAll?.(selector)||[]){
+          if(seen.has(el)||el.disabled||el.getAttribute?.('contenteditable')==='false'||el.getAttribute?.('aria-hidden')==='true')continue;
+          seen.add(el);out.push(el);
+        }
+      }
+      return out;
+    }
+    promptHints(){
+      const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;
+      const selectors=['[placeholder]','[aria-placeholder]','[data-placeholder]','div,span,p,label'];
+      const seen=new Set();
+      const hints=[];
+      for(const selector of selectors){
+        for(const el of document.querySelectorAll?.(selector)||[]){
+          if(seen.has(el)||!match.test(semantic(el)))continue;
+          seen.add(el);hints.push(el);
+        }
+      }
+      return hints.sort((a,b)=>semantic(a).length-semantic(b).length);
+    }
+    promptEditor(){
+      const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;
+      const editors=this.editorCandidates();
+      const direct=editors.find(x=>match.test(semantic(x)));
+      if(direct)return direct;
+      for(const hint of this.promptHints()){
+        let node=hint.parentElement||null;
+        for(let depth=0;node&&depth<7;depth++,node=node.parentElement){
+          const local=this.editorCandidates(node);
+          if(local.length===1)return local[0];
+          if(local.length>1){
+            const semanticLocal=local.find(x=>match.test(semantic(x)));
+            if(semanticLocal)return semanticLocal;
+          }
+        }
+      }
+      for(const editor of editors){
+        let node=editor.parentElement||null;
+        for(let depth=0;node&&depth<7;depth++,node=node.parentElement){
+          const buttons=[...(node.querySelectorAll?.('button')||[])];
+          const composerControls=buttons.filter(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semantic(b)));
+          if(buttons.length>=2&&buttons.length<=10&&composerControls.length>=1)return editor;
+        }
+      }
+      return undefined;
+    }
+    diagnostics(){return {editors:this.editorCandidates().length,hints:this.promptHints().length,buttons:(document.querySelectorAll?.('button')||[]).length};}
+    composerButtons(){
+      const editor=this.promptEditor();
+      if(!editor)return [];
+      let node=editor.parentElement||null;
+      for(let depth=0;node&&depth<5;depth++,node=node.parentElement){
+        const local=[...(node.querySelectorAll?.('button')||[])];
+        if(local.length<2||local.length>8)continue;
+        const hasComposerControl=local.some(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semantic(b)));
+        if(hasComposerControl)return local;
+      }
+      return [];
+    }
+,'i').test(text);
+      });
+    }
+    async ensureOutputCount(count=1){
+      count=Number(count);
+      if(!Number.isFinite(count)||count<1)throw error('INVALID_OUTPUT_COUNT',`Invalid output count: ${count}`,false,'prepare');
+      if(this.confirmedOutputCount===count)return;
+      let root=this.outputControlRoot();
+      if(!root){
+        const settings=this.settingsButton();
+        if(!settings)throw error('SETTINGS_BUTTON_NOT_FOUND','Flow composer Settings/Options button not found; refusing to generate with unknown output count',false,'prepare');
+        this.dispatchPress(settings);
+        root=await this.waitForOutputControl();
+      }
+      if(!root)throw error('OUTPUT_COUNT_CONTROL_NOT_FOUND','Flow Number of outputs setting not found; refusing to generate multiple outputs',false,'prepare');
+      const select=root.controls.find(el=>String(el.tagName||'').toLowerCase()==='select');
+      if(select){
+        if(String(select.value)!==String(count)){
+          select.value=String(count);
+          select.dispatchEvent?.(new Event('input',{bubbles:true}));
+          select.dispatchEvent?.(new Event('change',{bubbles:true}));
+        }
+        if(String(select.value)!==String(count))throw error('OUTPUT_COUNT_NOT_CONFIRMED',`Flow output count did not change to ${count}`,false,'prepare');
+        this.confirmedOutputCount=count;
+        return;
+      }
+      let choice=this.exactOutputChoice(root.controls,count);
+      const combo=root.controls.find(el=>el.getAttribute?.('role')==='combobox');
+      if(!choice&&combo){
+        this.dispatchPress(combo);
+        const start=Date.now();
+        while(Date.now()-start<1500&&!choice){
+          const options=[...(document.querySelectorAll?.('[role="option"],button')||[])];
+          choice=this.exactOutputChoice(options,count);
+          if(!choice)await wait(100);
+        }
+      }
+      if(!choice)throw error('OUTPUT_COUNT_OPTION_NOT_FOUND',`Flow output option ${count} not found`,false,'prepare');
+      if(!this.isSelected(choice))this.dispatchPress(choice);
+      await wait(120);
+      this.confirmedOutputCount=count;
+    }
     async ensureReady(){if(!this.isProjectPage())throw error('FLOW_PROJECT_REQUIRED','Open a Google Flow project before starting the batch',false,'prepare');if(!this.promptEditor()){const d=this.diagnostics();throw error('PROMPT_EDITOR_NOT_FOUND',`Flow project composer not found (editors=${d.editors}, hints=${d.hints}, buttons=${d.buttons})`,true,'prepare');}}
     async clickOption(patterns){const el=find(document.querySelectorAll('button'),patterns);if(el){el.click();await wait(100);return true;}return false;}
-    async prepare(_job){await this.ensureReady();}
+    async prepare(job={}){await this.ensureReady();if(job.outputs!=null)await this.ensureOutputCount(job.outputs);}
     async uploadReference(file){const input=document.querySelector('input[type="file"]');if(!input)throw error('FILE_INPUT_NOT_FOUND','Reference upload input not found',true,'reference');const beforeImgs=document.querySelectorAll('img').length;const dt=new DataTransfer();dt.items.add(file);input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));const start=Date.now();while(Date.now()-start<10000){if((document.body?.innerText||'').includes(file.name)||document.querySelectorAll('img').length>beforeImgs)return;await wait(250);}throw error('REFERENCE_NOT_CONFIRMED',`Flow did not confirm reference ${file.name}`,true,'reference');}
     async setPrompt(text){const input=this.promptEditor();if(!input)throw error('PROMPT_EDITOR_NOT_FOUND','Prompt editor not found',true,'prompt');input.focus();if('value' in input){const proto=Object.getPrototypeOf(input);const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set||Object.getOwnPropertyDescriptor(globalThis.HTMLTextAreaElement?.prototype||{},'value')?.set||Object.getOwnPropertyDescriptor(globalThis.HTMLInputElement?.prototype||{},'value')?.set;if(setter)setter.call(input,text);else input.value=text;}else{input.textContent=text;}input.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));input.dispatchEvent(new Event('change',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:' ',code:'Space'}));}
     snapshot(){return new Set([...document.querySelectorAll('img')].map(i=>i.currentSrc||i.src).filter(Boolean));}
