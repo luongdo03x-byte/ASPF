@@ -135,6 +135,12 @@ export async function captureTrustedGeneration(tabId,target,waitForDescriptor,ch
     continue;
    }
 
+   if(descriptorError){
+    descriptorError.retryable=false;
+    descriptorError.stage=descriptorError.stage||'capture';
+    throw descriptorError;
+   }
+
    if(descriptorValue instanceof Blob)return descriptorValue;
 
    const sourceUrl=descriptorValue?.sourceUrl||'';
@@ -162,12 +168,6 @@ export async function captureTrustedGeneration(tabId,target,waitForDescriptor,ch
     bodyTried.add(rec.requestId);
     const blob=await readResponseBody(rec);
     if(blob&&blob.size>=minBytes)return blob;
-   }
-
-   if(descriptorError){
-    descriptorError.retryable=false;
-    descriptorError.stage=descriptorError.stage||'capture';
-    throw descriptorError;
    }
 
    await new Promise(r=>setTimeout(r,80));
