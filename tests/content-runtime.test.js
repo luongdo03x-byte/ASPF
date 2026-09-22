@@ -76,6 +76,7 @@ function loadRuntime({document, location={hostname:'flow.google.com', pathname:'
     PointerEvent: class { constructor(type, init={}){ this.type=type; Object.assign(this, init); } },
     DragEvent: class { constructor(type, init={}){ this.type=type; Object.assign(this, init); } },
     File: TestFile,
+    getComputedStyle: el=>el?._computedStyle||{filter:'none',opacity:'1',backgroundImage:''},
   });
   vm.runInContext(runtimeSource, context, {filename:'content-runtime.js'});
   return new context.FlowBatchRuntime.FlowRuntime();
@@ -327,4 +328,91 @@ test('rejects a non-File reference before DataTransfer.add', async()=>{
   editor.parentElement=composer;
   const runtime=loadRuntime({document:makeDocument([editor,add,agent,arrow])});
   await assert.rejects(()=>runtime.uploadReference({name:'bad.png'}),/not a browser File/i);
+});
+
+
+test('waitForSettledVisual waits until a blurred result becomes stable', async()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
+  const arrow=element({tagName:'BUTTON'});
+  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,arrow]:[];}};
+  editor.parentElement=composer;
+
+  const card=element({tagName:'DIV',attrs:{role:'img','aria-label':'Generated image'}});
+  card.getBoundingClientRect=()=>({left:210,top:155,width:420,height:240,right:630,bottom:395});
+  card._computedStyle={filter:'blur(8px)',opacity:'1',backgroundImage:''};
+
+  let includeCard=false;
+  const doc={
+    body:{innerText:''},
+    querySelector(){return null;},
+    querySelectorAll(selector){
+      const base=[editor,add,agent,arrow];
+      const all=includeCard?[...base,card]:base;
+      if(selector.includes(','))return selector.split(',').flatMap(part=>all.filter(x=>matchesSelector(x,part.trim())));
+      return all.filter(x=>matchesSelector(x,selector));
+    }
+  };
+
+  const runtime=loadRuntime({document:doc});
+  runtime.resultStableMs=30;
+  runtime.resultSettleMs=15;
+  runtime.resultPollMs=5;
+  runtime.beforeVisual=runtime.visualSnapshot();
+  includeCard=true;
+
+  const started=Date.now();
+  setTimeout(()=>{card._computedStyle={filter:'none',opacity:'1',backgroundImage:''};},25);
+  const result=await runtime.waitForSettledVisual(250);
+  const elapsed=Date.now()-started;
+
+  assert.equal(result.el,card);
+  assert.ok(elapsed>=55, `expected settle delay after blur cleared, got ${elapsed}ms`);
+});
+
+test('waitForSettledVisual resets stability when the generated image source changes', async()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
+  const arrow=element({tagName:'BUTTON'});
+  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,arrow]:[];}};
+  editor.parentElement=composer;
+
+  const img=element({tagName:'IMG',attrs:{'aria-label':'Generated image'}});
+  img.complete=true;
+  img.naturalWidth=1024;
+  img.naturalHeight=576;
+  img.src='https://example.test/preview.png';
+  img.currentSrc=img.src;
+  img.getBoundingClientRect=()=>({left:210,top:155,width:420,height:236,right:630,bottom:391});
+  img._computedStyle={filter:'none',opacity:'1',backgroundImage:''};
+
+  let includeImg=false;
+  const doc={
+    body:{innerText:''},
+    querySelector(){return null;},
+    querySelectorAll(selector){
+      const base=[editor,add,agent,arrow];
+      const all=includeImg?[...base,img]:base;
+      if(selector.includes(','))return selector.split(',').flatMap(part=>all.filter(x=>matchesSelector(x,part.trim())));
+      return all.filter(x=>matchesSelector(x,selector));
+    }
+  };
+
+  const runtime=loadRuntime({document:doc});
+  runtime.resultStableMs=30;
+  runtime.resultSettleMs=15;
+  runtime.resultPollMs=5;
+  runtime.before=new Set();
+  runtime.beforeVisual=runtime.visualSnapshot();
+  includeImg=true;
+
+  const started=Date.now();
+  setTimeout(()=>{img.src='https://example.test/final.png';img.currentSrc=img.src;},20);
+  const result=await runtime.waitForSettledVisual(250);
+  const elapsed=Date.now()-started;
+
+  assert.equal(result.sourceUrl,'https://example.test/final.png');
+  assert.ok(elapsed>=50, `expected stability timer reset after source change, got ${elapsed}ms`);
 });
