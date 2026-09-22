@@ -83,10 +83,19 @@
     }
     settingsButton(){
       const buttons=this.composerButtons();
-      return buttons.find(b=>{
+      const labeled=buttons.find(b=>{
         const t=norm(semantic(b));
         return t.includes('settings')||t.includes('options')||t.includes('cài đặt')||t.includes('tùy chọn');
       });
+      if(labeled)return labeled;
+      const send=this.generateButton();
+      const sendIndex=buttons.indexOf(send);
+      if(buttons.length>=4&&buttons.length<=6&&sendIndex===buttons.length-1&&sendIndex>0){
+        const candidate=buttons[sendIndex-1];
+        const t=norm(semantic(candidate));
+        if(!/add|attach|upload|plus|agent|file|tệp|image|ảnh/.test(t))return candidate;
+      }
+      return undefined;
     }
     outputLabel(){
       const nodes=[...(document.querySelectorAll?.('div,span,p,label,legend')||[])];
