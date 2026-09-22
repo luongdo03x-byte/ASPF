@@ -121,80 +121,7 @@
         const value=this.controlValue(el);
         if(value===exact)return true;
         const text=norm(semantic(el));
-        return new RegExp(`^${exact}\\s*(output|outputs|image|images|ảnh)?(() => {
-  const wait=ms=>new Promise(r=>setTimeout(r,ms));
-  const norm=s=>String(s||'').trim().toLowerCase();
-  const semantic=el=>[el.getAttribute?.('aria-label'),el.getAttribute?.('aria-placeholder'),el.getAttribute?.('placeholder'),el.getAttribute?.('data-placeholder'),el.getAttribute?.('title'),el.getAttribute?.('data-tooltip'),el.getAttribute?.('data-tooltip-text'),el.getAttribute?.('data-testid'),el.innerText,el.textContent].filter(Boolean).join(' ');
-  const find=(elements,patterns)=>[...elements].find(el=>patterns.some(p=>norm(semantic(el)).includes(norm(p)))&&!el.disabled);
-  const error=(code,message,retryable=true,stage=null)=>Object.assign(new Error(message),{code,retryable,stage});
-  class FlowRuntime {
-    constructor(){this.before=new Set();this.beforeVisual=new Set();this.timeoutMs=180000;this.confirmedOutputCount=null;}
-    isProjectPage(){return /(^|\.)flow\.google\.com$/i.test(location.hostname||'')&&/^\/project\//.test(location.pathname||'');}
-    editorCandidates(root=document){
-      const selectors=['textarea','[contenteditable]','[role="textbox"]','input[type="text"]'];
-      const seen=new Set();
-      const out=[];
-      for(const selector of selectors){
-        for(const el of root.querySelectorAll?.(selector)||[]){
-          if(seen.has(el)||el.disabled||el.getAttribute?.('contenteditable')==='false'||el.getAttribute?.('aria-hidden')==='true')continue;
-          seen.add(el);out.push(el);
-        }
-      }
-      return out;
-    }
-    promptHints(){
-      const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;
-      const selectors=['[placeholder]','[aria-placeholder]','[data-placeholder]','div,span,p,label'];
-      const seen=new Set();
-      const hints=[];
-      for(const selector of selectors){
-        for(const el of document.querySelectorAll?.(selector)||[]){
-          if(seen.has(el)||!match.test(semantic(el)))continue;
-          seen.add(el);hints.push(el);
-        }
-      }
-      return hints.sort((a,b)=>semantic(a).length-semantic(b).length);
-    }
-    promptEditor(){
-      const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;
-      const editors=this.editorCandidates();
-      const direct=editors.find(x=>match.test(semantic(x)));
-      if(direct)return direct;
-      for(const hint of this.promptHints()){
-        let node=hint.parentElement||null;
-        for(let depth=0;node&&depth<7;depth++,node=node.parentElement){
-          const local=this.editorCandidates(node);
-          if(local.length===1)return local[0];
-          if(local.length>1){
-            const semanticLocal=local.find(x=>match.test(semantic(x)));
-            if(semanticLocal)return semanticLocal;
-          }
-        }
-      }
-      for(const editor of editors){
-        let node=editor.parentElement||null;
-        for(let depth=0;node&&depth<7;depth++,node=node.parentElement){
-          const buttons=[...(node.querySelectorAll?.('button')||[])];
-          const composerControls=buttons.filter(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semantic(b)));
-          if(buttons.length>=2&&buttons.length<=10&&composerControls.length>=1)return editor;
-        }
-      }
-      return undefined;
-    }
-    diagnostics(){return {editors:this.editorCandidates().length,hints:this.promptHints().length,buttons:(document.querySelectorAll?.('button')||[]).length};}
-    composerButtons(){
-      const editor=this.promptEditor();
-      if(!editor)return [];
-      let node=editor.parentElement||null;
-      for(let depth=0;node&&depth<5;depth++,node=node.parentElement){
-        const local=[...(node.querySelectorAll?.('button')||[])];
-        if(local.length<2||local.length>8)continue;
-        const hasComposerControl=local.some(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semantic(b)));
-        if(hasComposerControl)return local;
-      }
-      return [];
-    }
-,'i').test(text);
+        return new RegExp(`^${exact}\\s*(output|outputs|image|images|ảnh)?$`,'i').test(text);
       });
     }
     async ensureOutputCount(count=1){
@@ -221,12 +148,12 @@
         return;
       }
       let choice=this.exactOutputChoice(root.controls,count);
-      const combo=root.controls.find(el=>el.getAttribute?.('role')==='combobox');
+      const combo=root.controls.find(el=>el.getAttribute?.('type')==='combobox');
       if(!choice&&combo){
         this.dispatchPress(combo);
         const start=Date.now();
         while(Date.now()-start<1500&&!choice){
-          const options=[...(document.querySelectorAll?.('[role="option"],button')||[])];
+          const options=[...document.querySelectorAll?.('[role="option"],button')||[]];
           choice=this.exactOutputChoice(options,count);
           if(!choice)await wait(100);
         }
@@ -238,8 +165,8 @@
     }
     async ensureReady(){if(!this.isProjectPage())throw error('FLOW_PROJECT_REQUIRED','Open a Google Flow project before starting the batch',false,'prepare');if(!this.promptEditor()){const d=this.diagnostics();throw error('PROMPT_EDITOR_NOT_FOUND',`Flow project composer not found (editors=${d.editors}, hints=${d.hints}, buttons=${d.buttons})`,true,'prepare');}}
     async clickOption(patterns){const el=find(document.querySelectorAll('button'),patterns);if(el){el.click();await wait(100);return true;}return false;}
-    async prepare(job={}){await this.ensureReady();if(job.outputs!=null)await this.ensureOutputCount(job.outputs);}
-    async uploadReference(file){const input=document.querySelector('input[type="file"]');if(!input)throw error('FILE_INPUT_NOT_FOUND','Reference upload input not found',true,'reference');const beforeImgs=document.querySelectorAll('img').length;const dt=new DataTransfer();dt.items.add(file);input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));const start=Date.now();while(Date.now()-start<10000){if((document.body?.innerText||'').includes(file.name)||document.querySelectorAll('img').length>beforeImgs)return;await wait(250);}throw error('REFERENCE_NOT_CONFIRMED',`Flow did not confirm reference ${file.name}`,true,'reference');}
+    async prepare(job={}){await this.ensureReady();if"job.outputs!=null)await this.ensureOutputCount(job.outputs);}
+    async uploadReference(file){const input=document.querySelector('input[type="file"]');if(!input)throw error('FILE_INPUT_NOT_FOUND','Reference upload input not found,true,'reference');const beforeImgs=document.querySelectorAll('img').length;const dt=new DataTransfer();dt.items.add(file);input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));const start=Date.now();while(Date.now()-start<10000){if((document.body?.innerText||'').includes(file.name)||document.querySelectorAll('img').length>beforeImgs)return;await wait(250);}throw error('REFERENCE_NOT_CONFIRMED',`Flow did not confirm reference ${file.name}`,true,'reference');}
     async setPrompt(text){const input=this.promptEditor();if(!input)throw error('PROMPT_EDITOR_NOT_FOUND','Prompt editor not found',true,'prompt');input.focus();if('value' in input){const proto=Object.getPrototypeOf(input);const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set||Object.getOwnPropertyDescriptor(globalThis.HTMLTextAreaElement?.prototype||{},'value')?.set||Object.getOwnPropertyDescriptor(globalThis.HTMLInputElement?.prototype||{},'value')?.set;if(setter)setter.call(input,text);else input.value=text;}else{input.textContent=text;}input.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));input.dispatchEvent(new Event('change',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:' ',code:'Space'}));}
     snapshot(){return new Set([...document.querySelectorAll('img')].map(i=>i.currentSrc||i.src).filter(Boolean));}
     visualCandidates(){
