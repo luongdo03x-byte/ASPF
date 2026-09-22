@@ -1,3 +1,14 @@
+function arrayBufferToBase64(buffer){
+  const bytes=new Uint8Array(buffer);
+  const chunkSize=0x8000;
+  let binary='';
+  for(let i=0;i<bytes.length;i+=chunkSize){
+    const chunk=bytes.subarray(i,Math.min(i+chunkSize,bytes.length));
+    binary+=String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
 export class OffscreenDownloadManager {
   constructor(chromeApi=chrome){this.chrome=chromeApi;}
   async ensureOffscreen(){
@@ -12,7 +23,8 @@ export class OffscreenDownloadManager {
     }
     await this.ensureOffscreen();
     const bytes=await blob.arrayBuffer();
-    const response=await this.chrome.runtime.sendMessage({target:'offscreen',type:'CREATE_OBJECT_URL',bytes,mimeType:blob.type||'image/png'});
+    const base64=arrayBufferToBase64(bytes);
+    const response=await this.chrome.runtime.sendMessage({target:'offscreen',type:'CREATE_OBJECT_URL',base64,mimeType:blob.type||'image/png'});
     if(!response?.ok) throw new Error(response?.error||'Could not create download URL');
     const id=await this.chrome.downloads.download({url:response.url,filename:path,saveAs:false,conflictAction:'uniquify'});
     const url=response.url;
