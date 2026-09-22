@@ -5,6 +5,14 @@ import vm from 'node:vm';
 
 const runtimeSource = await readFile(new URL('../src/flow/content-runtime.js', import.meta.url), 'utf8');
 
+class TestFile {
+  constructor(parts,name,{type=''}={}){
+    this.parts=parts;
+    this.name=name;
+    this.type=type;
+  }
+}
+
 function element({tagName='TEXTAREA', attrs={}, disabled=false, text=''}={}) {
   return {
     tagName,
@@ -66,6 +74,8 @@ function loadRuntime({document, location={hostname:'flow.google.com', pathname:'
     KeyboardEvent: class { constructor(type, init={}){ this.type=type; Object.assign(this, init); } },
     MouseEvent: class { constructor(type, init={}){ this.type=type; Object.assign(this, init); } },
     PointerEvent: class { constructor(type, init={}){ this.type=type; Object.assign(this, init); } },
+    DragEvent: class { constructor(type, init={}){ this.type=type; Object.assign(this, init); } },
+    File: TestFile,
   });
   vm.runInContext(runtimeSource, context, {filename:'content-runtime.js'});
   return new context.FlowBatchRuntime.FlowRuntime();
@@ -301,8 +311,20 @@ test('uploadReference opens Add and waits for Flow to create the file input', as
   fileInput.dispatchEvent=evt=>{if(evt.type==='change')doc.body.innerText='S01_IMG01.png';};
 
   const runtime=loadRuntime({document:doc});
-  await runtime.uploadReference({name:'S01_IMG01.png'});
+  await runtime.uploadReference(new TestFile([new Uint8Array([1,2,3])],'S01_IMG01.png',{type:'image/png'}));
   assert.equal(add.clicked,true);
   assert.equal(fileInput.files.length,1);
   assert.equal(fileInput.files[0].name,'S01_IMG01.png');
+});
+
+
+test('rejects a non-File reference before DataTransfer.add', async()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
+  const arrow=element({tagName:'BUTTON'});
+  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,arrow]:[];}};
+  editor.parentElement=composer;
+  const runtime=loadRuntime({document:makeDocument([editor,add,agent,arrow])});
+  await assert.rejects(()=>runtime.uploadReference({name:'bad.png'}),/not a browser File/i);
 });
