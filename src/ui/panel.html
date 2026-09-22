@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="popup.css">
+  <title>Flow Batch Generator</title>
+</head>
+<body class="side-panel">
+  <main>
+    <header><h1>Flow Batch Generator</h1><span id="flow-status" class="pill">Checking Flow…</span></header>
+    <section class="card">
+      <label id="drop-zone" class="file">
+        <strong>Import prompts_batch.md</strong>
+        <span class="muted">Choose or drop a .md file here</span>
+        <input id="prompt-file" type="file" accept=".md,text/markdown,text/plain">
+      </label>
+      <div id="import-status" class="muted status-line">No file selected.</div>
+      <div id="summary" class="summary muted">No batch imported.</div>
+      <div id="validation"></div>
+      <p id="error" class="error"></p>
+    </section>
+    <section id="progress-card" class="card hidden">
+      <div class="row"><strong id="batch-name"></strong><span id="batch-status" class="pill"></span></div>
+      <div class="progress"><div id="progress-bar"></div></div>
+      <div id="progress-text" class="muted"></div>
+      <div id="current-job"></div>
+    </section>
+    <section class="controls">
+      <button id="start" disabled>Start</button>
+      <button id="pause" class="secondary" disabled>Pause</button>
+      <button id="retry" class="secondary hidden">Retry Job</button>
+      <button id="stop" class="danger" disabled>Stop</button>
+    </section>
+    <section class="card"><div class="row"><strong>Recent log</strong><button id="refresh" class="link">Refresh</button></div><pre id="log">—</pre></section>
+  </main>
+  <script type="module" src="panel.js"></script>
+</body>
+</html>

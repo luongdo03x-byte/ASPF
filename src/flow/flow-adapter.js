@@ -1,0 +1,48 @@
+import { ExtensionError } from '../core/errors.js';
+
+const wait = ms => new Promise(r=>setTimeout(r,ms));
+const norm = s => String(s||'').trim().toLowerCase();
+export function snapshotImageSources(document){ return new Set([...document.querySelectorAll('img')].map(i=>i.src).filter(Boolean)); }
+function semanticText(el){ return [el.getAttribute?.('aria-label'),el.getAttribute?.('aria-placeholder'),el.getAttribute?.('placeholder'),el.getAttribute?.('data-placeholder'),el.getAttribute?.('title'),el.getAttribute?.('data-tooltip'),el.getAttribute?.('data-tooltip-text'),el.getAttribute?.('data-testid'),el.innerText,el.textContent].filter(Boolean).join(' '); }
+function findByText(elements, patterns){ return [...elements].find(el=>patterns.some(p=>norm(semanticText(el)).includes(norm(p))) && !el.disabled); }
+
+export class FlowAdapter {
+ constructor({document=globalThis.document, fetch=globalThis.fetch, DataTransferCtor=globalThis.DataTransfer, EventCtor=globalThis.Event, timeoutMs=180000, location=globalThis.location}={}){this.document=document;this.fetch=fetch;this.DataTransferCtor=DataTransferCtor;this.EventCtor=EventCtor;this.timeoutMs=timeoutMs;this.location=location;this.beforeSources=new Set();}
+ isProjectPage(){if(!this.location)return true;return /(^|\.)flow\.google\.com$/i.test(this.location.hostname||'') && /^\/project\//.test(this.location.pathname||'');}
+ editorCandidates(root=this.document){const selectors=['textarea','[contenteditable]','[role="textbox"]','input[type="text"]'];const seen=new Set();const out=[];for(const selector of selectors){for(const el of root.querySelectorAll?.(selector)||[]){if(seen.has(el)||el.disabled||el.getAttribute?.('contenteditable')==='false'||el.getAttribute?.('aria-hidden')==='true')continue;seen.add(el);out.push(el);}}return out;}
+ promptHints(){const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;const selectors=['[placeholder]','[aria-placeholder]','[data-placeholder]','div,span,p,label'];const seen=new Set();const hints=[];for(const selector of selectors){for(const el of this.document.querySelectorAll?.(selector)||[]){if(seen.has(el)||!match.test(semanticText(el)))continue;seen.add(el);hints.push(el);}}return hints.sort((a,b)=>semanticText(a).length-semanticText(b).length);}
+ promptEditor(){const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;const editors=this.editorCandidates();const direct=editors.find(x=>match.test(semanticText(x)));if(direct)return direct;for(const hint of this.promptHints()){let node=hint.parentElement||null;for(let depth=0;node&&depth<7;depth++,node=node.parentElement){const local=this.editorCandidates(node);if(local.length===1)return local[0];if(local.length>1){const semanticLocal=local.find(x=>match.test(semanticText(x)));if(semanticLocal)return semanticLocal;}}}for(const editor of editors){let node=editor.parentElement||null;for(let depth=0;node&&depth<7;depth++,node=node.parentElement){const buttons=[...(node.querySelectorAll?.('button')||[])];const composerControls=buttons.filter(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semanticText(b)));if(buttons.length>=2&&buttons.length<=10&&composerControls.length>=1)return editor;}}return undefined;}
+ diagnostics(){return {editors:this.editorCandidates().length,hints:this.promptHints().length,buttons:(this.document.querySelectorAll?.('button')||[]).length};}
+ composerButtons(){
+  const editor=this.promptEditor();
+  if(!editor)return [];
+  let node=editor.parentElement||null;
+  for(let depth=0;node&&depth<5;depth++,node=node.parentElement){
+   const local=[...(node.querySelectorAll?.('button')||[])];
+   if(local.length<2||local.length>8)continue;
+   const hasComposerControl=local.some(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semanticText(b)));
+   if(hasComposerControl)return local;
+  }
+  return [];
+ }
+ generateButton(){
+  const buttons=this.composerButtons();
+  if(!buttons.length)return undefined;
+  const semanticPatterns=['generate','tạo','send','submit','gửi','run'];
+  const semanticAny=buttons.find(el=>semanticPatterns.some(p=>norm(semanticText(el)).includes(norm(p))));
+  if(semanticAny)return semanticAny;
+  const negative=/add|attach|upload|settings?|option|menu|tool|plus|agent|image|ảnh|tệp|file|home|help|back|close|project|account|profile|expand|fullscreen/i;
+  const candidates=buttons.filter(b=>!negative.test(semanticText(b)));
+  return candidates[candidates.length-1];
+ }
+ async ensureReady(){if(!this.isProjectPage())throw new ExtensionError('FLOW_PROJECT_REQUIRED','Open a Google Flow project before starting the batch',{retryable:false,stage:'prepare'});if(!this.promptEditor()){const d=this.diagnostics();throw new ExtensionError('PROMPT_EDITOR_NOT_FOUND',`Flow project composer not found (editors=${d.editors}, hints=${d.hints}, buttons=${d.buttons})`,{retryable:true,stage:'prepare'});}}
+ async clickOption(patterns,{required=false,code='OPTION_NOT_FOUND'}={}){const buttons=this.document.querySelectorAll('button');const el=findByText(buttons,patterns);if(el){el.click();await wait(100);return true;}if(required)throw new ExtensionError(code,`Flow option not found: ${patterns[0]}`,{retryable:true,stage:'prepare'});return false;}
+ async prepare(_job){await this.ensureReady();}
+ async clearReferenceInputs(){/* Flow may keep prior chips; current V1 relies on each dependent generation view clearing after generation. */}
+ async uploadReference(file){const input=this.document.querySelectorAll('input[type="file"]')[0];if(!input)throw new ExtensionError('FILE_INPUT_NOT_FOUND','Reference upload input not found',{retryable:true,stage:'reference'});if(!this.DataTransferCtor)throw new ExtensionError('DATATRANSFER_UNAVAILABLE','Browser DataTransfer is unavailable',{retryable:false,stage:'reference'});const dt=new this.DataTransferCtor();dt.items.add(file);input.files=dt.files;input.dispatchEvent(new this.EventCtor('change',{bubbles:true}));await wait(250);}
+ async setPrompt(text){const input=this.promptEditor();if(!input)throw new ExtensionError('PROMPT_EDITOR_NOT_FOUND','Prompt editor not found',{retryable:true,stage:'prompt'});input.focus?.();if('value' in input)input.value=text;else input.textContent=text;input.dispatchEvent?.(new this.EventCtor('input',{bubbles:true,inputType:'insertText',data:text}));input.dispatchEvent?.(new this.EventCtor('change',{bubbles:true}));}
+ async clickGenerate(){await this.ensureReady();let b=this.generateButton();const started=Date.now();while(b?.disabled&&Date.now()-started<3000){await wait(100);b=this.generateButton();}if(!b)throw new ExtensionError('GENERATE_BUTTON_NOT_FOUND','Flow send button not found inside the project composer',{retryable:true,stage:'generate'});if(b.disabled)throw new ExtensionError('GENERATE_BUTTON_DISABLED','Flow send button is still disabled after the prompt was filled',{retryable:true,stage:'generate'});this.beforeSources=snapshotImageSources(this.document);b.click();}
+ async waitForNewImage(){const started=Date.now();while(Date.now()-started<this.timeoutMs){for(const img of this.document.querySelectorAll('img')){if(img.src&&!this.beforeSources.has(img.src)&&!/^data:image\/svg/i.test(img.src))return img;}await wait(500);}throw new ExtensionError('RESULT_TIMEOUT','Timed out waiting for a new generated image',{retryable:true,stage:'result'});}
+ async blobFromImage(img){if(!img?.src)throw new ExtensionError('RESULT_URL_MISSING','Generated image URL missing',{retryable:true,stage:'capture'});try{const res=await this.fetch(img.src,{credentials:'include'});if(!res.ok)throw new Error(`HTTP ${res.status}`);const blob=await res.blob();if(!blob.type?.startsWith('image/'))throw new Error(`Unexpected MIME ${blob.type}`);return blob;}catch(e){throw new ExtensionError('RESULT_FETCH_FAILED',`Could not capture generated image: ${e.message}`,{retryable:true,stage:'capture'});}}
+ async generateAndCapture(job){await this.clickGenerate();const img=await this.waitForNewImage(job);return this.blobFromImage(img);}
+}

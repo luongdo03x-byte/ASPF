@@ -1,0 +1,11 @@
+{
+  "name": "flow-batch-extension",
+  "version": "0.1.13",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "build": "node scripts/build.js",
+    "check": "npm test && npm run build"
+  }
+}
