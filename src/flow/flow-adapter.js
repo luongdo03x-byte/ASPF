@@ -13,6 +13,8 @@ export class FlowAdapter {
  promptHints(){const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;const selectors=['[placeholder]','[aria-placeholder]','[data-placeholder]','div,span,p,label'];const seen=new Set();const hints=[];for(const selector of selectors){for(const el of this.document.querySelectorAll?.(selector)||[]){if(seen.has(el)||!match.test(semanticText(el)))continue;seen.add(el);hints.push(el);}}return hints.sort((a,b)=>semanticText(a).length-semanticText(b).length);}
  promptEditor(){const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;const editors=this.editorCandidates();const direct=editors.find(x=>match.test(semanticText(x)));if(direct)return direct;for(const hint of this.promptHints()){let node=hint.parentElement||null;for(let depth=0;node&&depth<7;depth++,node=node.parentElement){const local=this.editorCandidates(node);if(local.length===1)return local[0];if(local.length>1){const semanticLocal=local.find(x=>match.test(semanticText(x)));if(semanticLocal)return semanticLocal;}}}for(const editor of editors){let node=editor.parentElement||null;for(let depth=0;node&&depth<7;depth++,node=node.parentElement){const buttons=[...(node.querySelectorAll?.('button')||[])];const composerControls=buttons.filter(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semanticText(b)));if(buttons.length>=2&&buttons.length<=10&&composerControls.length>=1)return editor;}}return undefined;}
  diagnostics(){return {editors:this.editorCandidates().length,hints:this.promptHints().length,buttons:(this.document.querySelectorAll?.('button')||[]).length};}
+ buttonRect(el){const r=el?.getBoundingClientRect?.();if(!r)return null;const width=Number(r.width||0),height=Number(r.height||0);if(width<=0||height<=0)return null;const left=Number(r.left||0),top=Number(r.top||0);return {left,top,right:Number(r.right??(left+width)),bottom:Number(r.bottom??(top+height)),width,height,cx:left+width/2,cy:top+height/2};}
+ nearEditorButtons(){const editor=this.promptEditor();const er=this.buttonRect(editor);if(!editor||!er)return [];return [...(this.document.querySelectorAll?.('button')||[])].filter(b=>!b.disabled).map(b=>({b,r:this.buttonRect(b)})).filter(x=>x.r&&x.r.cx>=er.left-60&&x.r.cx<=er.right+60&&x.r.cy>=er.top-50&&x.r.cy<=er.bottom+100).sort((a,b)=>a.r.cx-b.r.cx).map(x=>x.b);}
  composerButtons(){
   const editor=this.promptEditor();
   if(!editor)return [];
@@ -24,6 +26,8 @@ export class FlowAdapter {
    const hasComposerControl=local.some(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semanticText(b)));
    if(hasComposerControl&&local.length>best.length)best=local;
   }
+  const geometric=this.nearEditorButtons();
+  if(geometric.length>best.length&&geometric.length<=8)return geometric;
   return best;
  }
  generateButton(){
@@ -34,19 +38,22 @@ export class FlowAdapter {
   if(semanticAny)return semanticAny;
   const negative=/add|attach|upload|settings?|option|menu|tool|plus|agent|image|ảnh|tệp|file|home|help|back|close|project|account|profile|expand|fullscreen/i;
   const candidates=buttons.filter(b=>!negative.test(semanticText(b)));
-  return candidates[candidates.length-1];
+  if(candidates.length)return candidates[candidates.length-1];
+  const geometric=this.nearEditorButtons();
+  return geometric[geometric.length-1];
  }
  settingsButton(){
   const buttons=this.composerButtons();
   const labeled=buttons.find(b=>{const t=norm(semanticText(b));return t.includes('settings')||t.includes('options')||t.includes('cài đặt')||t.includes('tùy chọn');});
   if(labeled)return labeled;
   const send=this.generateButton();
-  const sendIndex=buttons.indexOf(send);
-  if(buttons.length>=4&&buttons.length<=6&&sendIndex===buttons.length-1&&sendIndex>0){
-   const candidate=buttons[sendIndex-1];
-   const t=norm(semanticText(candidate));
-   if(!/add|attach|upload|plus|agent|file|tệp|image|ảnh/.test(t))return candidate;
+  const sr=this.buttonRect(send);
+  if(send&&sr){
+   const nearby=[...(this.document.querySelectorAll?.('button')||[])].filter(b=>b!==send&&!b.disabled).map(b=>({b,r:this.buttonRect(b)})).filter(x=>x.r&&x.r.cx<sr.cx&&Math.abs(x.r.cy-sr.cy)<=Math.max(24,sr.height*1.5)).map(x=>({b:x.b,r:x.r,gap:sr.cx-x.r.cx})).filter(x=>x.gap>0&&x.gap<=100).sort((a,b)=>a.gap-b.gap);
+   for(const item of nearby){const t=norm(semanticText(item.b));if(!/add|attach|upload|plus|agent|file|tệp|image|ảnh/.test(t))return item.b;}
   }
+  const sendIndex=buttons.indexOf(send);
+  if(buttons.length>=4&&buttons.length<=8&&sendIndex===buttons.length-1&&sendIndex>0){const candidate=buttons[sendIndex-1];const t=norm(semanticText(candidate));if(!/add|attach|upload|plus|agent|file|tệp|image|ảnh/.test(t))return candidate;}
   return undefined;
  }
  outputLabel(){
@@ -54,9 +61,11 @@ export class FlowAdapter {
   return nodes.find(el=>{const t=norm(semanticText(el));return t.includes('number of outputs')||t==='outputs'||t.includes('số ảnh')||t.includes('số kết quả');});
  }
  outputRoot(){
-  const label=this.outputLabel();if(!label)return null;
-  let node=label.parentElement||null;
-  for(let depth=0;node&&depth<5;depth++,node=node.parentElement){const controls=[...(node.querySelectorAll?.('button,[role="radio"],[role="option"],select')||[])];if(controls.length)return {node,controls};}
+  const label=this.outputLabel();
+  if(label){let node=label.parentElement||null;for(let depth=0;node&&depth<5;depth++,node=node.parentElement){const controls=[...(node.querySelectorAll?.('button,[role="radio"],[role="option"],select')||[])];if(controls.length)return {node,controls};}}
+  const all=[...(this.document.querySelectorAll?.('button,[role="radio"],[role="option"],select')||[])];
+  const one=all.find(el=>this.controlText(el)==='1');
+  if(one){let node=one.parentElement||null;for(let depth=0;node&&depth<4;depth++,node=node.parentElement){const controls=[...(node.querySelectorAll?.('button,[role="radio"],[role="option"],select')||[])];if(controls.some(el=>this.controlText(el)==='2'))return {node,controls};}}
   return null;
  }
  controlText(el){const value=String(el?.value||el?.getAttribute?.('value')||'').trim();if(value)return value;return String(el?.innerText||el?.textContent||'').trim();}
