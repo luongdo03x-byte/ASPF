@@ -248,9 +248,13 @@
       return null;
     }
     makeTransfer(file){
-      const dt=new DataTransfer();
-      dt.items.add(file);
-      return dt;
+      try{
+        const dt=new DataTransfer();
+        dt.items.add(file);
+        return dt;
+      }catch(e){
+        throw error('REFERENCE_DATATRANSFER_FAILED','Could not place reference image into DataTransfer: '+e.message,false,'reference');
+      }
     }
     async confirmReference(file,beforeImgs,timeoutMs=10000){
       const start=Date.now();
