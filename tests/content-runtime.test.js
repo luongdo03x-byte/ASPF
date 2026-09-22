@@ -169,6 +169,61 @@ test('clickGenerate submits using the composer arrow button', async()=>{
 });
 
 
+test('recognizes submission when Flow rerenders the composer editor after a trusted click', async()=>{
+  const oldEditor=element({attrs:{placeholder:'What do you want to create?'}});
+  oldEditor.value='scene prompt';
+  const newEditor=element({attrs:{placeholder:'What do you want to create?'}});
+  newEditor.value='';
+
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
+  const settings=element({tagName:'BUTTON',attrs:{'aria-label':'Settings'}});
+  const arrow=element({tagName:'BUTTON'});
+
+  const composer={
+    parentElement:null,
+    querySelectorAll(selector){
+      return selector==='button'?[add,agent,settings,arrow]:[];
+    }
+  };
+  oldEditor.parentElement=composer;
+  newEditor.parentElement=composer;
+
+  let currentEditor=oldEditor;
+  const doc={
+    body:{innerText:''},
+    querySelector(){return null;},
+    querySelectorAll(selector){
+      const all=[currentEditor,add,agent,settings,arrow];
+      if(selector.includes(','))return selector.split(',').flatMap(part=>all.filter(x=>matchesSelector(x,part.trim())));
+      return all.filter(x=>matchesSelector(x,selector));
+    }
+  };
+
+  const runtime=loadRuntime({document:doc});
+  runtime.before=new Set();
+  setTimeout(()=>{currentEditor=newEditor;},20);
+
+  const accepted=await runtime.waitForSubmissionSignal(arrow,oldEditor,Date.now(),200);
+  assert.equal(accepted,true);
+});
+
+test('recognizes submission when the current Flow editor is cleared in place', async()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  editor.value='scene prompt';
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
+  const arrow=element({tagName:'BUTTON'});
+  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,arrow]:[];}};
+  editor.parentElement=composer;
+  const runtime=loadRuntime({document:makeDocument([editor,add,agent,arrow])});
+  runtime.before=new Set();
+  setTimeout(()=>{editor.value='';},20);
+  const accepted=await runtime.waitForSubmissionSignal(arrow,editor,Date.now(),200);
+  assert.equal(accepted,true);
+});
+
+
 test('detects a newly rendered role=img visual card when Flow does not use an img element', async()=>{
   const editor=element({attrs:{placeholder:'What do you want to create?'}});
   const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
