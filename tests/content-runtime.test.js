@@ -265,3 +265,27 @@ test('prefers the full composer ancestor over an inner two-button group', ()=>{
   assert.equal(runtime.generateButton(),arrow);
   assert.equal(runtime.settingsButton(),sliders);
 });
+
+
+test('finds Settings by geometry even when DOM ancestors hide the right-side controls', ()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  editor.getBoundingClientRect=()=>({left:380,top:800,width:480,height:120,right:860,bottom:920});
+
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  add.getBoundingClientRect=()=>({left:390,top:890,width:28,height:28,right:418,bottom:918});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
+  agent.getBoundingClientRect=()=>({left:425,top:887,width:55,height:32,right:480,bottom:919});
+  const extra=element({tagName:'BUTTON'});
+  extra.getBoundingClientRect=()=>({left:775,top:889,width:28,height:28,right:803,bottom:917});
+  const sliders=element({tagName:'BUTTON'});
+  sliders.getBoundingClientRect=()=>({left:808,top:889,width:28,height:28,right:836,bottom:917});
+  const arrow=element({tagName:'BUTTON'});
+  arrow.getBoundingClientRect=()=>({left:840,top:887,width:32,height:32,right:872,bottom:919});
+
+  const inner={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent]:[];}};
+  editor.parentElement=inner;
+
+  const runtime=loadRuntime({document:makeDocument([editor,add,agent,extra,sliders,arrow])});
+  assert.equal(runtime.generateButton(),arrow);
+  assert.equal(runtime.settingsButton(),sliders);
+});
