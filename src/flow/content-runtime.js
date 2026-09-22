@@ -209,18 +209,33 @@
     }
     addMediaButton(){
       const buttons=this.composerButtons();
-      const labeled=buttons.find(b=>/add|attach|upload|plus|thêm|đính kèm/i.test(norm(semantic(b))));
+      const labeled=buttons.find(b=>{
+        const t=norm(semantic(b));
+        return /(^|\s)(add|attach|upload|plus|thêm|đính kèm)(\s|$)/i.test(t);
+      });
       if(labeled)return labeled;
-      const geometric=this.nearEditorButtons();
-      return geometric[0];
+      const all=this.nearEditorButtons();
+      const agent=all.find(b=>norm(semantic(b)).includes('agent'));
+      const ar=this.buttonRect(agent);
+      if(agent&&ar){
+        const left=all
+          .filter(b=>b!==agent)
+          .map(b=>({b,r:this.buttonRect(b)}))
+          .filter(x=>x.r&&x.r.cx<ar.cx&&Math.abs(x.r.cy-ar.cy)<=Math.max(24,ar.height*1.5))
+          .map(x=>({b:x.b,gap:ar.cx-x.r.cx}))
+          .filter(x=>x.gap>0&&x.gap<=100)
+          .sort((a,b)=>a.gap-b.gap);
+        if(left.length)return left[0].b;
+      }
+      return undefined;
     }
     uploadMenuButton(){
-      const nodes=[...(document.querySelectorAll?.('button,[role="menuitem"],[role="option"],[role="button"]')||[])];
+      const nodes=[...(document.querySelectorAll?.('[role="menuitem"],[role="option"],[role="menu"] button,[role="listbox"] button')||[])];
       const patterns=['upload image','upload','add image','image','media','file','computer','device','ảnh','tệp','tải lên'];
       return nodes.find(el=>{
         if(el.disabled)return false;
         const t=norm(semantic(el));
-        return patterns.some(p=>t.includes(norm(p)))&&!/agent|settings|option|send|generate/.test(t);
+        return patterns.some(p=>t.includes(norm(p)))&&!/agent|settings|option|send|generate|home|project/.test(t);
       });
     }
     async waitForReferenceInput(timeoutMs=2200){
@@ -272,12 +287,16 @@
       return false;
     }
     async uploadReference(file){
+      if(!this.isProjectPage())throw error('FLOW_PROJECT_REQUIRED_REFERENCE','Flow project is no longer open before reference upload',false,'reference');
+      if(!(file instanceof File))throw error('REFERENCE_NOT_FILE','Reference payload is not a browser File',false,'reference');
       const beforeImgs=(document.querySelectorAll?.('img')||[]).length;
       let input=this.referenceInput();
       if(!input){
         const add=this.addMediaButton();
         if(add){
           this.dispatchPress(add);
+          await wait(120);
+          if(!this.isProjectPage())throw error('REFERENCE_NAVIGATED_AWAY','Reference Add control navigated away from the Flow project',false,'reference');
           input=await this.waitForReferenceInput(1200);
         }
       }
@@ -285,18 +304,20 @@
         const menu=this.uploadMenuButton();
         if(menu){
           this.dispatchPress(menu);
+          await wait(120);
+          if(!this.isProjectPage())throw error('REFERENCE_NAVIGATED_AWAY','Reference upload menu navigated away from the Flow project',false,'reference');
           input=await this.waitForReferenceInput(1600);
         }
       }
       if(input){
         const dt=this.makeTransfer(file);
-        try{input.files=dt.files;}catch(e){throw error('REFERENCE_FILE_ASSIGN_FAILED','Could not attach reference file: '+e.message,true,'reference');}
+        try{input.files=dt.files;}catch(e){throw error('REFERENCE_FILE_ASSIGN_FAILED','Could not attach reference file: '+e.message,false,'reference');}
         input.dispatchEvent?.(new Event('input',{bubbles:true}));
         input.dispatchEvent?.(new Event('change',{bubbles:true}));
         if(await this.confirmReference(file,beforeImgs))return;
       }
       if(await this.dropReference(file,beforeImgs))return;
-      throw error('REFERENCE_UPLOAD_UNAVAILABLE','Flow reference uploader did not appear after opening the Add menu',true,'reference');
+      throw error('REFERENCE_UPLOAD_UNAVAILABLE','Flow reference uploader did not appear after opening the Add menu',false,'reference');
     }
     async setPrompt(text){const input=this.promptEditor();if(!input)throw error('PROMPT_EDITOR_NOT_FOUND','Prompt editor not found',true,'prompt');input.focus();if('value' in input){const proto=Object.getPrototypeOf(input);const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set||Object.getOwnPropertyDescriptor(globalThis.HTMLTextAreaElement?.prototype||{},'value')?.set||Object.getOwnPropertyDescriptor(globalThis.HTMLInputElement?.prototype||{},'value')?.set;if(setter)setter.call(input,text);else input.value=text;}else{input.textContent=text;}input.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));input.dispatchEvent(new Event('change',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:' ',code:'Space'}));}
     snapshot(){return new Set([...document.querySelectorAll('img')].map(i=>i.currentSrc||i.src).filter(Boolean));}
