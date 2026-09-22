@@ -5,7 +5,7 @@
   const find=(elements,patterns)=>[...elements].find(el=>patterns.some(p=>norm(semantic(el)).includes(norm(p)))&&!el.disabled);
   const error=(code,message,retryable=true,stage=null)=>Object.assign(new Error(message),{code,retryable,stage});
   class FlowRuntime {
-    constructor(){this.before=new Set();this.beforeVisual=new Set();this.timeoutMs=180000;this.resultStableMs=4000;this.resultSettleMs=2000;this.resultPollMs=350;this.confirmedOutputCount=null;}
+    constructor(){this.before=new Set();this.beforeVisual=new Set();this.timeoutMs=180000;this.resultStableMs=5000;this.resultSettleMs=2000;this.resultPollMs=300;this.confirmedOutputCount=null;}
     isProjectPage(){return /(^|\.)flow\.google\.com$/i.test(location.hostname||'')&&/^\/project\//.test(location.pathname||'');}
     editorCandidates(root=document){
       const selectors=['textarea','[contenteditable]','[role="textbox"]','input[type="text"]'];
@@ -363,6 +363,20 @@
       const naturalWidth=Number(el?.naturalWidth||el?.width||0);
       const naturalHeight=Number(el?.naturalHeight||el?.height||0);
       const text=norm(semantic(el));
+      const childImages=[...(el?.querySelectorAll?.('img')||[])].map(img=>{
+        const childStyle=globalThis.getComputedStyle?.(img)||{};
+        return [
+          img.currentSrc||img.src||'',
+          Number(img.naturalWidth||img.width||0),
+          Number(img.naturalHeight||img.height||0),
+          img.complete===false?'loading':'complete',
+          String(childStyle.filter||''),
+          String(childStyle.opacity||'')
+        ].join(':');
+      }).join(';');
+      const canvases=[...(el?.querySelectorAll?.('canvas')||[])].map(canvas=>[
+        Number(canvas.width||0),Number(canvas.height||0)
+      ].join('x')).join(';');
       return [
         v?.sourceUrl||'',
         Math.round(v?.rect?.x||0),
@@ -373,24 +387,64 @@
         naturalHeight,
         String(style.filter||''),
         String(style.opacity||''),
+        childImages,
+        canvases,
         text.replace(/\s+/g,' ').slice(0,160)
       ].join('|');
     }
     visualIsBusy(v){
       const el=v?.el;
       if(!el)return true;
+      const styleBusy=node=>{
+        if(!node)return false;
+        const style=globalThis.getComputedStyle?.(node)||{};
+        const filter=String(style.filter||'').toLowerCase();
+        const opacity=Number.parseFloat(style.opacity);
+        const classes=norm(typeof node.className==='string'?node.className:'');
+        if(/blur\((?!0(?:px)?\))/i.test(filter))return true;
+        if(Number.isFinite(opacity)&&opacity<0.95)return true;
+        if(/skeleton|shimmer|placeholder|loading|blurred/.test(classes))return true;
+        return false;
+      };
+      const imageBusy=img=>{
+        if(!img)return false;
+        if(img.complete===false)return true;
+        const nw=Number(img.naturalWidth||0),nh=Number(img.naturalHeight||0);
+        if((img.src||img.currentSrc)&&(!nw||!nh))return true;
+        if((nw>0&&nw<256)||(nh>0&&nh<140))return true;
+        return styleBusy(img);
+      };
+
       const tag=String(el.tagName||'').toUpperCase();
+      if(tag==='IMG'&&imageBusy(el))return true;
+      if(styleBusy(el))return true;
+
+      const descendants=[...(el.querySelectorAll?.('img,canvas,[role="img"],[aria-busy="true"],[role="progressbar"],progress,[data-loading="true"]')||[])];
+      if(descendants.some(node=>{
+        const childTag=String(node.tagName||'').toUpperCase();
+        if(childTag==='IMG')return imageBusy(node);
+        if(node.getAttribute?.('aria-busy')==='true')return true;
+        if(node.getAttribute?.('data-loading')==='true')return true;
+        if(node.getAttribute?.('role')==='progressbar'||childTag==='PROGRESS')return true;
+        return styleBusy(node);
+      }))return true;
+
+      let hasRenderablePixels=Boolean(v?.sourceUrl);
       if(tag==='IMG'){
-        if(el.complete===false)return true;
         const nw=Number(el.naturalWidth||0),nh=Number(el.naturalHeight||0);
-        if((Number.isFinite(nw)&&nw>0&&nw<256)||(Number.isFinite(nh)&&nh>0&&nh<140))return true;
-        if((el.src||el.currentSrc)&&(!nw||!nh))return true;
+        hasRenderablePixels=hasRenderablePixels||(el.complete!==false&&nw>=256&&nh>=140);
+      }else if(tag==='CANVAS'){
+        hasRenderablePixels=Number(el.width||0)>=256&&Number(el.height||0)>=140;
+      }else{
+        const readyChild=[...(el.querySelectorAll?.('img')||[])].some(img=>{
+          const nw=Number(img.naturalWidth||0),nh=Number(img.naturalHeight||0);
+          return img.complete!==false&&nw>=256&&nh>=140&&!imageBusy(img);
+        });
+        const readyCanvas=[...(el.querySelectorAll?.('canvas')||[])].some(canvas=>Number(canvas.width||0)>=256&&Number(canvas.height||0)>=140);
+        hasRenderablePixels=hasRenderablePixels||readyChild||readyCanvas;
       }
-      const style=globalThis.getComputedStyle?.(el)||{};
-      const filter=String(style.filter||'').toLowerCase();
-      const opacity=Number.parseFloat(style.opacity);
-      if(/blur\((?!0(?:px)?\))/i.test(filter))return true;
-      if(Number.isFinite(opacity)&&opacity<0.95)return true;
+      if(!hasRenderablePixels)return true;
+
       let node=el;
       for(let depth=0;node&&depth<4;depth++,node=node.parentElement){
         if(node.getAttribute?.('aria-busy')==='true')return true;
@@ -398,7 +452,8 @@
         if(/loading|generating|processing|rendering|pending/.test(state))return true;
         const ownText=norm(node.innerText||node.textContent||'');
         if(/generating|creating|rendering|processing|loading|preparing/.test(ownText))return true;
-        if(/(^|\s)\d{1,3}%($|\s)/.test(ownText))return true;
+        const percentages=[...ownText.matchAll(/(?:^|\s)(\d{1,3})%(?=$|\s)/g)].map(m=>Number(m[1]));
+        if(percentages.some(p=>Number.isFinite(p)&&p<100))return true;
         const busy=node.querySelector?.('[aria-busy="true"],[role="progressbar"],progress,[data-loading="true"]');
         if(busy)return true;
       }
