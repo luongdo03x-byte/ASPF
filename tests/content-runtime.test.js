@@ -242,3 +242,26 @@ test('uses the unlabeled penultimate composer icon as Settings only inside a com
   assert.equal(runtime.generateButton(),arrow);
   assert.equal(runtime.settingsButton(),sliders);
 });
+
+
+test('prefers the full composer ancestor over an inner two-button group', ()=>{
+  const editor=element({attrs:{placeholder:'What do you want to create?'}});
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Agent'});
+  const extra=element({tagName:'BUTTON'});
+  const sliders=element({tagName:'BUTTON'});
+  const arrow=element({tagName:'BUTTON'});
+  const outer={
+    parentElement:null,
+    querySelectorAll(selector){return selector==='button'?[add,agent,extra,sliders,arrow]:[];}
+  };
+  const inner={
+    parentElement:outer,
+    querySelectorAll(selector){return selector==='button'?[add,agent]:[];}
+  };
+  editor.parentElement=inner;
+  const runtime=loadRuntime({document:makeDocument([editor,add,agent,extra,sliders,arrow])});
+  assert.deepEqual(runtime.composerButtons(),[add,agent,extra,sliders,arrow]);
+  assert.equal(runtime.generateButton(),arrow);
+  assert.equal(runtime.settingsButton(),sliders);
+});
