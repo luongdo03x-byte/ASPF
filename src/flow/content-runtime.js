@@ -59,6 +59,25 @@
       return undefined;
     }
     diagnostics(){return {editors:this.editorCandidates().length,hints:this.promptHints().length,buttons:(document.querySelectorAll?.('button')||[]).length};}
+    buttonRect(el){
+      const r=el?.getBoundingClientRect?.();
+      if(!r)return null;
+      const width=Number(r.width||0),height=Number(r.height||0);
+      if(width<=0||height<=0)return null;
+      const left=Number(r.left||0),top=Number(r.top||0);
+      return {left,top,right:Number(r.right??(left+width)),bottom:Number(r.bottom??(top+height)),width,height,cx:left+width/2,cy:top+height/2};
+    }
+    nearEditorButtons(){
+      const editor=this.promptEditor();
+      const er=this.buttonRect(editor);
+      if(!editor||!er)return [];
+      return [...(document.querySelectorAll?.('button')||[])]
+        .filter(b=>!b.disabled)
+        .map(b=>({b,r:this.buttonRect(b)}))
+        .filter(x=>x.r&&x.r.cx>=er.left-60&&x.r.cx<=er.right+60&&x.r.cy>=er.top-50&&x.r.cy<=er.bottom+100)
+        .sort((a,b)=>a.r.cx-b.r.cx)
+        .map(x=>x.b);
+    }
     composerButtons(){
       const editor=this.promptEditor();
       if(!editor)return [];
@@ -70,6 +89,8 @@
         const hasComposerControl=local.some(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semantic(b)));
         if(hasComposerControl&&local.length>best.length)best=local;
       }
+      const geometric=this.nearEditorButtons();
+      if(geometric.length>best.length&&geometric.length<=8)return geometric;
       return best;
     }
     generateButton(){
@@ -80,7 +101,9 @@
       if(semanticAny)return semanticAny;
       const negative=/add|attach|upload|settings?|option|menu|tool|plus|agent|image|ảnh|tệp|file|home|help|back|close|project|account|profile|expand|fullscreen/i;
       const candidates=buttons.filter(b=>!negative.test(semantic(b)));
-      return candidates[candidates.length-1];
+      if(candidates.length)return candidates[candidates.length-1];
+      const geometric=this.nearEditorButtons();
+      return geometric[geometric.length-1];
     }
     settingsButton(){
       const buttons=this.composerButtons();
@@ -90,8 +113,22 @@
       });
       if(labeled)return labeled;
       const send=this.generateButton();
+      const sr=this.buttonRect(send);
+      if(send&&sr){
+        const nearby=[...(document.querySelectorAll?.('button')||[])]
+          .filter(b=>b!==send&&!b.disabled)
+          .map(b=>({b,r:this.buttonRect(b)}))
+          .filter(x=>x.r&&x.r.cx<sr.cx&&Math.abs(x.r.cy-sr.cy)<=Math.max(24,sr.height*1.5))
+          .map(x=>({b:x.b,r:x.r,gap:sr.cx-x.r.cx}))
+          .filter(x=>x.gap>0&&x.gap<=100)
+          .sort((a,b)=>a.gap-b.gap);
+        for(const item of nearby){
+          const t=norm(semantic(item.b));
+          if(!/add|attach|upload|plus|agent|file|tệp|image|ảnh/.test(t))return item.b;
+        }
+      }
       const sendIndex=buttons.indexOf(send);
-      if(buttons.length>=4&&buttons.length<=6&&sendIndex===buttons.length-1&&sendIndex>0){
+      if(buttons.length>=4&&buttons.length<=8&&sendIndex===buttons.length-1&&sendIndex>0){
         const candidate=buttons[sendIndex-1];
         const t=norm(semantic(candidate));
         if(!/add|attach|upload|plus|agent|file|tệp|image|ảnh/.test(t))return candidate;
@@ -107,11 +144,22 @@
     }
     outputRoot(){
       const label=this.outputLabel();
-      if(!label)return null;
-      let node=label.parentElement||null;
-      for(let depth=0;node&&depth<5;depth++,node=node.parentElement){
-        const controls=[...(node.querySelectorAll?.('button,[role="radio"],[role="option"],select')||[])];
-        if(controls.length)return {node,controls};
+      if(label){
+        let node=label.parentElement||null;
+        for(let depth=0;node&&depth<5;depth++,node=node.parentElement){
+          const controls=[...(node.querySelectorAll?.('button,[role="radio"],[role="option"],select')||[])];
+          if(controls.length)return {node,controls};
+        }
+      }
+      const all=[...(document.querySelectorAll?.('button,[role="radio"],[role="option"],select')||[])];
+      const one=all.find(el=>this.controlText(el)==='1');
+      if(one){
+        let node=one.parentElement||null;
+        for(let depth=0;node&&depth<4;depth++,node=node.parentElement){
+          const controls=[...(node.querySelectorAll?.('button,[role="radio"],[role="option"],select')||[])];
+          const hasTwo=controls.some(el=>this.controlText(el)==='2');
+          if(hasTwo)return {node,controls};
+        }
       }
       return null;
     }
