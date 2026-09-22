@@ -63,13 +63,14 @@
       const editor=this.promptEditor();
       if(!editor)return [];
       let node=editor.parentElement||null;
+      let best=[];
       for(let depth=0;node&&depth<5;depth++,node=node.parentElement){
         const local=[...(node.querySelectorAll?.('button')||[])];
         if(local.length<2||local.length>8)continue;
         const hasComposerControl=local.some(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semantic(b)));
-        if(hasComposerControl)return local;
+        if(hasComposerControl&&local.length>best.length)best=local;
       }
-      return [];
+      return best;
     }
     generateButton(){
       const buttons=this.composerButtons();
