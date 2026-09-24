@@ -114,7 +114,7 @@
       const patterns=['generate','tạo','send','submit','gửi','run'];
       const semanticAny=buttons.find(el=>patterns.some(p=>norm(semantic(el)).includes(norm(p))));
       if(semanticAny)return semanticAny;
-      const negative=/add|attach|upload|settings?|option|menu|tool|plus|agent|image|ảnh|tệp|file|home|help|back|close|project|account|profile|expand|fullscreen/i;
+      const negative=/add|attach|upload|settings?|option|menu|tool|plus|agent|tác nhân|image|ảnh|tệp|file|home|help|back|close|project|account|profile|expand|fullscreen/i;
       const candidates=buttons.filter(b=>!negative.test(semantic(b)));
       if(candidates.length)return candidates[candidates.length-1];
       const geometric=this.nearEditorButtons();
@@ -139,14 +139,14 @@
           .sort((a,b)=>a.gap-b.gap);
         for(const item of nearby){
           const t=norm(semantic(item.b));
-          if(!/add|attach|upload|plus|agent|file|tệp|image|ảnh/.test(t))return item.b;
+          if(!/add|attach|upload|plus|agent|tác nhân|file|tệp|image|ảnh/.test(t))return item.b;
         }
       }
       const sendIndex=buttons.indexOf(send);
       if(buttons.length>=4&&buttons.length<=8&&sendIndex===buttons.length-1&&sendIndex>0){
         const candidate=buttons[sendIndex-1];
         const t=norm(semantic(candidate));
-        if(!/add|attach|upload|plus|agent|file|tệp|image|ảnh/.test(t))return candidate;
+        if(!/add|attach|upload|plus|agent|tác nhân|file|tệp|image|ảnh/.test(t))return candidate;
       }
       return undefined;
     }
@@ -230,7 +230,7 @@
       });
       if(labeled)return labeled;
       const all=this.nearEditorButtons();
-      const agent=all.find(b=>norm(semantic(b)).includes('agent'));
+      const agent=all.find(b=>{const t=norm(semantic(b));return t.includes('agent')||t.includes('tác nhân');});
       const ar=this.buttonRect(agent);
       if(agent&&ar){
         const left=all
