@@ -7,6 +7,20 @@
   class FlowRuntime {
     constructor(){this.before=new Set();this.beforeVisual=new Set();this.timeoutMs=180000;this.resultStableMs=5000;this.resultSettleMs=2000;this.resultPollMs=300;this.confirmedOutputCount=null;}
     isProjectPage(){return /(^|\.)flow\.google\.com$/i.test(location.hostname||'')&&/^\/project\//.test(location.pathname||'');}
+    editorVisible(el){
+      if(!el)return false;
+      if(el.getAttribute?.('aria-hidden')==='true')return false;
+      const r=el.getBoundingClientRect?.();
+      if(!r)return true;
+      const width=Number(r.width||0),height=Number(r.height||0);
+      if(width<=0||height<=0)return false;
+      const style=globalThis.getComputedStyle?.(el)||{};
+      if(String(style.display||'').toLowerCase()==='none')return false;
+      if(String(style.visibility||'').toLowerCase()==='hidden')return false;
+      const opacity=Number.parseFloat(style.opacity);
+      if(Number.isFinite(opacity)&&opacity<=0)return false;
+      return true;
+    }
     editorCandidates(root=document){
       const selectors=['textarea','[contenteditable]','[role="textbox"]','input[type="text"]'];
       const seen=new Set();
@@ -17,10 +31,11 @@
           seen.add(el);out.push(el);
         }
       }
-      return out;
+      const visible=out.filter(el=>this.editorVisible(el));
+      return visible.length?visible:out;
     }
     promptHints(){
-      const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;
+      const match=/what do you want to create|bạn muốn tạo gì|prompt|describe|mô tả|câu lệnh/i;
       const selectors=['[placeholder]','[aria-placeholder]','[data-placeholder]','div,span,p,label'];
       const seen=new Set();
       const hints=[];
@@ -33,7 +48,7 @@
       return hints.sort((a,b)=>semantic(a).length-semantic(b).length);
     }
     promptEditor(){
-      const match=/what do you want to create|prompt|describe|mô tả|câu lệnh/i;
+      const match=/what do you want to create|bạn muốn tạo gì|prompt|describe|mô tả|câu lệnh/i;
       const editors=this.editorCandidates();
       const direct=editors.find(x=>match.test(semantic(x)));
       if(direct)return direct;
@@ -52,7 +67,7 @@
         let node=editor.parentElement||null;
         for(let depth=0;node&&depth<7;depth++,node=node.parentElement){
           const buttons=[...(node.querySelectorAll?.('button')||[])];
-          const composerControls=buttons.filter(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semantic(b)));
+          const composerControls=buttons.filter(b=>/add|attach|settings?|option|plus|agent|tác nhân|tệp|file/i.test(semantic(b)));
           if(buttons.length>=2&&buttons.length<=10&&composerControls.length>=1)return editor;
         }
       }
@@ -86,7 +101,7 @@
       for(let depth=0;node&&depth<5;depth++,node=node.parentElement){
         const local=[...(node.querySelectorAll?.('button')||[])];
         if(local.length<2||local.length>8)continue;
-        const hasComposerControl=local.some(b=>/add|attach|settings?|option|plus|agent|tệp|file/i.test(semantic(b)));
+        const hasComposerControl=local.some(b=>/add|attach|settings?|option|plus|agent|tác nhân|tệp|file/i.test(semantic(b)));
         if(hasComposerControl&&local.length>best.length)best=local;
       }
       const geometric=this.nearEditorButtons();
@@ -590,8 +605,11 @@
       const editor=this.promptEditor();
       const button=this.generateButton();
       const accepted=await this.waitForSubmissionSignal(button,editor,Date.now(),8000);
-      if(!accepted)throw error('SUBMIT_NOT_CONFIRMED','Flow did not react after the browser-level click',true,'generate');
-      const visual=await this.waitForSettledVisual();
+      // Flow frequently replaces or hides the composer without exposing a stable
+      // submit-state signal. The browser-level click has already been dispatched;
+      // the authoritative success condition is a new, fully rendered visual.
+      // Do not fail early just because the composer signal was ambiguous.
+      const visual=await this.waitForSettledVisual(accepted?this.timeoutMs:this.timeoutMs);
       const src=visual.sourceUrl||'';
       if(/^blob:|^data:/i.test(src)){
         try{const response=await fetch(src);const blob=await response.blob();if(!blob.type.startsWith('image/'))throw new Error(`Unexpected MIME ${blob.type}`);return blob;}
