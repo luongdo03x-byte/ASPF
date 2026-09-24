@@ -89,6 +89,40 @@ test('production Flow runtime recognizes the composer from its placeholder', asy
   assert.equal(runtime.promptEditor(), editor);
 });
 
+test('recognizes the Vietnamese Flow prompt placeholder', async()=>{
+  const editor=element({attrs:{placeholder:'Bạn muốn tạo gì?'}});
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Tác nhân'});
+  const arrow=element({tagName:'BUTTON'});
+  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,arrow]:[];}};
+  editor.parentElement=composer;
+  const runtime=loadRuntime({document:makeDocument([editor,add,agent,arrow])});
+  await assert.doesNotReject(()=>runtime.ensureReady());
+  assert.equal(runtime.promptEditor(),editor);
+  assert.equal(runtime.generateButton(),arrow);
+});
+
+test('prefers the visible Vietnamese composer editor over an old hidden editor', ()=>{
+  const hidden=element({attrs:{placeholder:'What do you want to create?'}});
+  hidden.value='old prompt';
+  hidden.getBoundingClientRect=()=>({left:0,top:0,width:0,height:0,right:0,bottom:0});
+
+  const visible=element({attrs:{placeholder:'Bạn muốn tạo gì?'}});
+  visible.value='';
+  visible.getBoundingClientRect=()=>({left:380,top:800,width:480,height:120,right:860,bottom:920});
+
+  const add=element({tagName:'BUTTON',attrs:{'aria-label':'Add'}});
+  const agent=element({tagName:'BUTTON',text:'Tác nhân'});
+  const arrow=element({tagName:'BUTTON'});
+  const composer={parentElement:null,querySelectorAll(selector){return selector==='button'?[add,agent,arrow]:[];}};
+  hidden.parentElement=composer;
+  visible.parentElement=composer;
+
+  const runtime=loadRuntime({document:makeDocument([hidden,visible,add,agent,arrow])});
+  assert.equal(runtime.promptEditor(),visible);
+});
+
+
 test('production Flow runtime never selects a global Send button outside the composer', ()=>{
   const editor=element({attrs:{placeholder:'What do you want to create?'}});
   editor.parentElement={parentElement:null,querySelectorAll(){return [];}};
@@ -384,6 +418,20 @@ test('rejects a non-File reference before DataTransfer.add', async()=>{
   editor.parentElement=composer;
   const runtime=loadRuntime({document:makeDocument([editor,add,agent,arrow])});
   await assert.rejects(()=>runtime.uploadReference({name:'bad.png'}),/not a browser File/i);
+});
+
+
+test('trusted generation waits for the final visual even when submit-state signals are ambiguous', async()=>{
+  const editor=element({attrs:{placeholder:'Bạn muốn tạo gì?'}});
+  const runtime=loadRuntime({document:makeDocument([editor])});
+  runtime.waitForSubmissionSignal=async()=>false;
+  runtime.waitForSettledVisual=async()=>({
+    sourceUrl:'https://example.test/final.png',
+    rect:{x:200,y:150,width:600,height:340}
+  });
+  const result=await runtime.waitForTrustedGenerateAndCapture();
+  assert.equal(result.sourceUrl,'https://example.test/final.png');
+  assert.equal(result.rect.width,600);
 });
 
 
